@@ -1,22 +1,26 @@
 import torch
+from typing import Tuple
 
-def generate_line_graph(n_points: int):
-    coord = torch.linspace(0, 1, steps=n_points).unsqueeze(1).repeat(1, 2)
-    coord = (coord - coord.mean(0)) / coord.std(0)
-    dist = ((coord.unsqueeze(1) - coord.unsqueeze(0)) ** 2).sum(dim=-1).fill_diagonal_(torch.inf)
-    edge_index = torch.argwhere(dist <= dist.min() + 0.001).T
-    return coord, edge_index
+# * coords.shape: [x, 2] for 2D or [x, 3] in 3D (default to 3D)
+# * edges.shape: [2, x]
 
-def generate_plane_graph():
+def generate_line_graph(n_points: int, length: float=1.0) -> Tuple[torch.Tensor, torch.Tensor]:
+    coords = torch.linspace(0, length, steps=n_points).unsqueeze(1).repeat(1, 3)
+    dist = ((coords.unsqueeze(1) - coords.unsqueeze(0)) ** 2).sum(dim=-1).fill_diagonal_(torch.inf)
+    edges = torch.argwhere(dist <= dist.min() + 0.001).T
+    return coords, edges
+
+def generate_square_plane_graph(n_points: int, length: float=1.0) -> Tuple[torch.Tensor, torch.Tensor]:
+    values = torch.linspace(0, length, steps=n_points)
+    x, y = torch.meshgrid(values, values, indexing='ij')
+    z = torch.zeros_like(x)
+    coords = torch.stack([x, y, z]).reshape(3, -1).permute(1, 0)
+    dist = ((coords.unsqueeze(1) - coords.unsqueeze(0)) ** 2).sum(dim=-1).fill_diagonal_(torch.inf)
+    edges = torch.argwhere(dist <= dist.min() + 0.001).T
+    return coords, edges
+
+def generate_cube_graph():
     raise NotImplementedError
-
-def generate_cube_graph(length: int, radius: float):
-    values = torch.linspace(0, 1, steps=length)
-    coord = torch.stack(torch.meshgrid(values, values, values, indexing='xy')).reshape(3, -1).T
-    dist = torch.norm(coord - coord.unsqueeze(1), dim=-1) < radius
-    dist.fill_diagonal_(0)
-    edge_index = dist.nonzero().T
-    return coord, edge_index
 
 def generate_sphere_graph():
     raise NotImplementedError
