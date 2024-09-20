@@ -16,6 +16,7 @@ class egc(torch.nn.Module):
         norm_n2: Optional[bool] = False,
         is_residual: Optional[bool] = False,
         has_attention: Optional[bool] = False,
+        device: Optional[str] = 'cuda',
     ):
         super(egc, self).__init__()
         assert aggr_coord == 'mean' or aggr_coord == 'sum'
@@ -26,6 +27,7 @@ class egc(torch.nn.Module):
         self.norm_n2 = norm_n2
         self.is_residual = is_residual
         self.has_attention = has_attention
+        self.device = device
         act = {'tanh': torch.nn.Tanh(), 'lrelu': torch.nn.LeakyReLU(), 'silu': torch.nn.SiLU()}[act_name]
         
         # * create mlps
@@ -56,13 +58,14 @@ class egc(torch.nn.Module):
     def get_coord_n2(
         self,
         coords: torch.Tensor,
-        e_index: torch.LongTensor,
+        edges: torch.LongTensor,
     ):
-        coords_diff = coords[e_index[0]] - coords[e_index[1]]
+        coords_diff = coords[edges[0]] - coords[edges[1]]
         coords_n2 = torch.sum(coords_diff ** 2, 1, keepdim=True)
         if self.norm_n2:
             coords_diff = coords_diff / (torch.sqrt(coords_n2).detach() + 1)
-        return coords_diff, coords_n2
+        
+        return coords_diff.to(self.device), coords_n2.to(self.device)
     
     def aggregated_sum(
         self,
@@ -82,17 +85,20 @@ class egc(torch.nn.Module):
         self,
         hidden: torch.Tensor,
         coords_n2: torch.Tensor,
-        edge_index: torch.LongTensor,
+        edges: torch.LongTensor,
         edge_weight: Optional[torch.Tensor] = None,
         edge_attr: Optional[torch.Tensor] = None,
     ):
         # # * concat all tensors 
         if edge_attr is not None:
             assert edge_attr.size(1) == self.e_attr_dim
-            edge_feat = torch.cat([hidden[edge_index[0]], hidden[edge_index[1]], coords_n2, edge_attr], dim=1)
+            edge_feat = torch.cat([hidden[edges[0]], hidden[edges[1]], coords_n2, edge_attr], dim=1).to(self.device)
         else:
-            edge_feat = torch.cat([hidden[edge_index[0]], hidden[edge_index[1]], coords_n2], dim=1)
+            edge_feat = torch.cat([hidden[edges[0]], hidden[edges[1]], coords_n2], dim=1).to(self.device)
 
+        # print (f'edge_feat.shape: {edge_feat.shape}')
+        # print (f'edge_feat.dtype: {edge_feat.dtype}')
+        
         # * run mlp
         out = self.message_mlp(edge_feat)
         
@@ -109,10 +115,10 @@ class egc(torch.nn.Module):
         coords: torch.Tensor,
         coords_diff: torch.Tensor,
         edge_feat: torch.Tensor,
-        edge_index: torch.LongTensor,
+        edges: torch.LongTensor,
     ):
         trans = coords_diff * self.coords_mlp(edge_feat)
-        coord_agg = self.aggregated_sum(trans, edge_index[0], coords.size(0), mean=self.aggr_coord == 'mean')
+        coord_agg = self.aggregated_sum(trans, edges[0], coords.size(0), mean=self.aggr_coord == 'mean')
         coords = coords + coord_agg
         return coords
     
@@ -120,9 +126,9 @@ class egc(torch.nn.Module):
         self,
         hidden: torch.Tensor,
         edge_feat: torch.Tensor,
-        edge_index: torch.LongTensor,
+        edges: torch.LongTensor,
     ):
-        edge_feat_agg = self.aggregated_sum(edge_feat, edge_index[0], hidden.size(0), mean=self.aggr_hidden == 'mean')
+        edge_feat_agg = self.aggregated_sum(edge_feat, edges[0], hidden.size(0), mean=self.aggr_hidden == 'mean')
         out = self.hidden_mlp(torch.cat([hidden, edge_feat_agg], dim=1))
         if self.is_residual:
             out = hidden + out
@@ -132,14 +138,18 @@ class egc(torch.nn.Module):
         self,
         coords: torch.Tensor,
         hidden: torch.Tensor,
-        edge_index: torch.LongTensor,
+        edges: torch.LongTensor,
         edge_weight: Optional[torch.Tensor] = None,
         edge_attr: Optional[torch.Tensor] = None
     ):
-        coords_diff, coords_n2 = self.get_coord_n2(coords, edge_index)
-        edge_feat = self.run_message_mlp(hidden, coords_n2, edge_index, edge_weight, edge_attr)
-        coords = self.run_coords_mlp(coords, coords_diff, edge_feat, edge_index)
-        hidden = self.run_hidden_mlp(hidden, edge_feat, edge_index)
+        # print (f'coords.dtype: {coords.dtype}')
+        # print (f'hidden.dtype: {hidden.dtype}')
+        # print (f'edges.dtype: {edges.dtype}')
+        
+        coords_diff, coords_n2 = self.get_coord_n2(coords, edges)
+        edge_feat = self.run_message_mlp(hidden, coords_n2, edges, edge_weight, edge_attr)
+        coords = self.run_coords_mlp(coords, coords_diff, edge_feat, edges)
+        hidden = self.run_hidden_mlp(hidden, edge_feat, edges)
         return coords, hidden
 
 class egnn(torch.nn.Module):
@@ -155,13 +165,13 @@ class egnn(torch.nn.Module):
         self,
         coords: torch.Tensor,
         hidden: torch.Tensor,
-        edge_index: torch.LongTensor,
+        edges: torch.LongTensor,
         edge_weight: Optional[torch.Tensor] = None,
         edge_attr: Optional[torch.Tensor] = None,
     ):
         out = None
         for layer in self.layers:
-            out = layer(coords, hidden, edge_index, edge_weight, edge_attr)
+            out = layer(coords, hidden, edges, edge_weight, edge_attr)
             coords, hidden = out
         assert isinstance(out, tuple)
         return out
