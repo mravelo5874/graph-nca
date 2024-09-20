@@ -5,11 +5,11 @@ class egc(torch.nn.Module):
     
     def __init__(
         self,
-        x_coord_dim: int,
+        coords_dim: int,
         hidden_dim: int,
         message_dim: int,
         out_hidden_dim: Optional[int] = None,
-        e_attr_dim: Optional[int] = 0,
+        edge_attr_dim: Optional[int] = 0,
         act_name: Optional[str] = 'silu',
         aggr_coord: Optional[str] = 'mean',
         aggr_hidden:  Optional[str] = 'sum',
@@ -30,19 +30,19 @@ class egc(torch.nn.Module):
         
         # * create mlps
         self.message_mlp = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim + hidden_dim + e_attr_dim + 1, message_dim),
+            torch.nn.Linear(hidden_dim + hidden_dim + edge_attr_dim + 1, message_dim),
             act,
             torch.nn.Linear(message_dim, message_dim),
             act
         )
-        last_coord_layer = torch.nn.Linear(x_coord_dim, 1, bias=False)
-        last_coord_layer.weight.data.zero_()
-        self.x_coords_mlp = torch.nn.Sequential(
-            torch.nn.Linear(message_dim, x_coord_dim),
+        last_coords_layer = torch.nn.Linear(coords_dim, 1, bias=False)
+        last_coords_layer.weight.data.zero_()
+        self.coords_mlp = torch.nn.Sequential(
+            torch.nn.Linear(message_dim, coords_dim),
             act,
-            last_coord_layer
+            last_coords_layer
         )
-        self.x_hidden_mlp = torch.nn.Sequential(
+        self.hidden_mlp = torch.nn.Sequential(
             torch.nn.Linear(message_dim + hidden_dim, message_dim),
             act,
             torch.nn.Linear(message_dim, self.out_node_dim)
@@ -55,14 +55,14 @@ class egc(torch.nn.Module):
   
     def get_coord_n2(
         self,
-        x_coords: torch.Tensor,
+        coords: torch.Tensor,
         e_index: torch.LongTensor,
     ):
-        x_coord_diff = x_coords[e_index[0]] - x_coords[e_index[1]]
-        x_coord_n2 = torch.sum(x_coord_diff ** 2, 1, keepdim=True)
+        coords_diff = coords[e_index[0]] - coords[e_index[1]]
+        coords_n2 = torch.sum(coords_diff ** 2, 1, keepdim=True)
         if self.norm_n2:
-            x_coord_diff = x_coord_diff / (torch.sqrt(x_coord_n2).detach() + 1)
-        return x_coord_diff, x_coord_n2
+            coords_diff = coords_diff / (torch.sqrt(coords_n2).detach() + 1)
+        return coords_diff, coords_n2
     
     def aggregated_sum(
         self,
@@ -80,67 +80,67 @@ class egc(torch.nn.Module):
         
     def run_message_mlp(
         self,
-        x_hidden: torch.Tensor,
-        x_coord_n2: torch.Tensor,
-        e_index: torch.LongTensor,
-        e_weight: Optional[torch.Tensor] = None,
-        e_attr: Optional[torch.Tensor] = None,
+        hidden: torch.Tensor,
+        coords_n2: torch.Tensor,
+        edge_index: torch.LongTensor,
+        edge_weight: Optional[torch.Tensor] = None,
+        edge_attr: Optional[torch.Tensor] = None,
     ):
         # # * concat all tensors 
-        if e_attr is not None:
-            assert e_attr.size(1) == self.e_attr_dim
-            edge_feat = torch.cat([x_hidden[e_index[0]], x_hidden[e_index[1]], x_coord_n2, e_attr], dim=1)
+        if edge_attr is not None:
+            assert edge_attr.size(1) == self.e_attr_dim
+            edge_feat = torch.cat([hidden[edge_index[0]], hidden[edge_index[1]], coords_n2, edge_attr], dim=1)
         else:
-            edge_feat = torch.cat([x_hidden[e_index[0]], x_hidden[e_index[1]], x_coord_n2], dim=1)
+            edge_feat = torch.cat([hidden[edge_index[0]], hidden[edge_index[1]], coords_n2], dim=1)
 
         # * run mlp
         out = self.message_mlp(edge_feat)
         
         # * apply edge weights
-        if e_weight is not None:
-            out = e_weight.unsqueeze(1) * out
+        if edge_weight is not None:
+            out = edge_weight.unsqueeze(1) * out
         if self.has_attention:
             out = self.attention_mlp(out) * out
 
         return out
     
-    def run_x_coords_mlp(
+    def run_coords_mlp(
         self,
-        x_coords: torch.Tensor,
-        x_coords_diff: torch.Tensor,
-        e_feat: torch.Tensor,
-        e_index: torch.LongTensor,
+        coords: torch.Tensor,
+        coords_diff: torch.Tensor,
+        edge_feat: torch.Tensor,
+        edge_index: torch.LongTensor,
     ):
-        trans = x_coords_diff * self.x_coords_mlp(e_feat)
-        coord_agg = self.aggregated_sum(trans, e_index[0], x_coords.size(0), mean=self.aggr_coord == 'mean')
-        x_coords = x_coords + coord_agg
-        return x_coords
+        trans = coords_diff * self.coords_mlp(edge_feat)
+        coord_agg = self.aggregated_sum(trans, edge_index[0], coords.size(0), mean=self.aggr_coord == 'mean')
+        coords = coords + coord_agg
+        return coords
     
-    def run_x_hidden_mlp(
+    def run_hidden_mlp(
         self,
-        x_hidden: torch.Tensor,
-        e_feat: torch.Tensor,
-        e_index: torch.LongTensor,
+        hidden: torch.Tensor,
+        edge_feat: torch.Tensor,
+        edge_index: torch.LongTensor,
     ):
-        edge_feat_agg = self.aggregated_sum(e_feat, e_index[0], x_hidden.size(0), mean=self.aggr_hidden == 'mean')
-        out = self.x_hidden_mlp(torch.cat([x_hidden, edge_feat_agg], dim=1))
+        edge_feat_agg = self.aggregated_sum(edge_feat, edge_index[0], hidden.size(0), mean=self.aggr_hidden == 'mean')
+        out = self.hidden_mlp(torch.cat([hidden, edge_feat_agg], dim=1))
         if self.is_residual:
-            out = x_hidden + out
+            out = hidden + out
         return out
 
     def forward(
         self,
-        x_coords: torch.Tensor,
-        x_hidden: torch.Tensor,
-        e_index: torch.LongTensor,
-        e_weight: Optional[torch.Tensor] = None,
-        e_attr: Optional[torch.Tensor] = None
+        coords: torch.Tensor,
+        hidden: torch.Tensor,
+        edge_index: torch.LongTensor,
+        edge_weight: Optional[torch.Tensor] = None,
+        edge_attr: Optional[torch.Tensor] = None
     ):
-        x_coords_diff, x_coord_n2 = self.get_coord_n2(x_coords, e_index)
-        e_feat = self.run_message_mlp(x_hidden, x_coord_n2, e_index, e_weight, e_attr)
-        x_coords = self.run_x_coords_mlp(x_coords, x_coords_diff, e_feat, e_index)
-        x_hidden = self.run_x_hidden_mlp(x_hidden, e_feat, e_index)
-        return x_coords, x_hidden
+        coords_diff, coords_n2 = self.get_coord_n2(coords, edge_index)
+        edge_feat = self.run_message_mlp(hidden, coords_n2, edge_index, edge_weight, edge_attr)
+        coords = self.run_coords_mlp(coords, coords_diff, edge_feat, edge_index)
+        hidden = self.run_hidden_mlp(hidden, edge_feat, edge_index)
+        return coords, hidden
 
 class egnn(torch.nn.Module):
 
@@ -153,40 +153,40 @@ class egnn(torch.nn.Module):
 
     def forward(
         self,
-        x_coords: torch.Tensor,
-        x_hidden: torch.Tensor,
-        e_index: torch.LongTensor,
-        e_weight: Optional[torch.Tensor] = None,
-        e_attr: Optional[torch.Tensor] = None,
+        coords: torch.Tensor,
+        hidden: torch.Tensor,
+        edge_index: torch.LongTensor,
+        edge_weight: Optional[torch.Tensor] = None,
+        edge_attr: Optional[torch.Tensor] = None,
     ):
         out = None
         for layer in self.layers:
-            out = layer(x_coords, x_hidden, e_index, e_weight, e_attr)
-            x_coords, x_hidden = out
+            out = layer(coords, hidden, edge_index, edge_weight, edge_attr)
+            coords, hidden = out
         assert isinstance(out, tuple)
         return out
     
 def test_egnn_equivariance():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    n_nodes, hidden_dim, message_dim, x_coord_dim = 6, 8, 16, 3
+    num_nodes, hidden_dim, message_dim, coords_dim = 6, 8, 16, 3
     my_egnn = egnn([
-        egc(x_coord_dim, hidden_dim, message_dim, has_attention=True),
-        egc(x_coord_dim, hidden_dim, message_dim, has_attention=True)
+        egc(coords_dim, hidden_dim, message_dim, has_attention=True),
+        egc(coords_dim, hidden_dim, message_dim, has_attention=True)
     ]).to(device)
-    node_feat = torch.randn(n_nodes, hidden_dim).to(device)
+    node_feat = torch.randn(num_nodes, hidden_dim).to(device)
     
-    W = torch.randn(n_nodes, n_nodes).sigmoid().to(device)
+    W = torch.randn(num_nodes, num_nodes).sigmoid().to(device)
     W = (torch.tril(W) + torch.tril(W, -1).T)
     e_index = (W.fill_diagonal_(0) > 0.5).nonzero().T
     
     num_tests = 100
-    for i in range(num_tests):
+    for _ in range(num_tests):
 
-        rotation = torch.nn.init.orthogonal_(torch.empty(x_coord_dim, x_coord_dim)).to(device)
-        translation = torch.randn(1, x_coord_dim).to(device)
+        rotation = torch.nn.init.orthogonal_(torch.empty(coords_dim, coords_dim)).to(device)
+        translation = torch.randn(1, coords_dim).to(device)
 
-        in_coord_1 = torch.randn(n_nodes, x_coord_dim).to(device)
+        in_coord_1 = torch.randn(num_nodes, coords_dim).to(device)
         in_coord_2 = torch.matmul(rotation, in_coord_1.T).T + translation
         
         out_coord_1, _ = my_egnn(in_coord_1, node_feat, e_index)
