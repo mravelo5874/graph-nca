@@ -166,7 +166,10 @@ class egnn(torch.nn.Module):
         assert isinstance(out, tuple)
         return out
     
-def test_egnn_equivariance():
+def test_egnn_equivariance(
+    num_tests: int = 100,
+    verbose: bool = False
+):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_nodes, hidden_dim, message_dim, coords_dim = 6, 8, 16, 3
@@ -180,8 +183,7 @@ def test_egnn_equivariance():
     W = (torch.tril(W) + torch.tril(W, -1).T)
     e_index = (W.fill_diagonal_(0) > 0.5).nonzero().T
     
-    num_tests = 100
-    for _ in range(num_tests):
+    for i in range(num_tests):
 
         rotation = torch.nn.init.orthogonal_(torch.empty(coords_dim, coords_dim)).to(device)
         translation = torch.randn(1, coords_dim).to(device)
@@ -194,5 +196,7 @@ def test_egnn_equivariance():
 
         out_coord_1_aug = torch.matmul(rotation, out_coord_1.T).T + translation
         assert torch.allclose(out_coord_2, out_coord_1_aug, atol=1e-6)
+        
+        if (verbose): print(f'[pool.py] test {i} complete')
 
-    print(f'[egnn.py] finished running {num_tests} tests -- all succeeded')
+    if (verbose): print(f'[egnn.py] finished running {num_tests} tests -- all succeeded')

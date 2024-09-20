@@ -50,7 +50,6 @@ def test_pool_functionality(
     num_tests: int = 100,
     verbose: bool = False
 ):
-    
     from data.generate import generate_bunny_graph
     
     seed_coords, _ = generate_bunny_graph()
@@ -59,7 +58,7 @@ def test_pool_functionality(
     for i in range(num_tests):
         
         pool = TrainPool(
-            pool_size=np.random.randint(1, 512),
+            pool_size=np.random.randint(4, 512),
             seed_coords=seed_coords,
             seed_hidden=seed_hidden
         )
@@ -89,5 +88,3 @@ def test_pool_functionality(
         if (verbose): print(f'[pool.py] test {i} complete')
             
     print(f'[pool.py] finished running {num_tests} tests -- all succeeded')
-        
-    

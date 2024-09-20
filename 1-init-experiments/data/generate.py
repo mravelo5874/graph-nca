@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 from typing import Tuple
@@ -21,8 +22,9 @@ def generate_square_plane_graph(n_points: int, length: float=1.0) -> Tuple[torch
     return coords, edges
 
 def generate_bunny_graph() -> Tuple[torch.Tensor, torch.Tensor]:
-    coords = torch.tensor(np.load('data/bunny/bunny-coords.npy'))
-    edges = torch.tensor(np.load('data/bunny/bunny-edges.npy'))
+    path = os.path.realpath(__file__).replace('\\generate.py', '')
+    coords = torch.tensor(np.load(f'{path}/bunny/bunny-coords.npy'))
+    edges = torch.tensor(np.load(f'{path}/bunny/bunny-edges.npy'))
     return coords, edges
 
 def generate_cube_graph():
