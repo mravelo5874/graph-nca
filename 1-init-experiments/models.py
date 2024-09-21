@@ -6,6 +6,8 @@ from egnn import egnn, egc
 import numpy as np
 import datetime
 import torch
+import json
+import os
 
 class MorphogenicEGNCA(torch.nn.Module):
     def __init__(
@@ -21,7 +23,8 @@ class MorphogenicEGNCA(torch.nn.Module):
 class FixedTargetEGNCA(torch.nn.Module):
     def __init__(
         self,
-        args: Namespace
+        args: Namespace,
+        new_model: bool = True,
     ):
         super(FixedTargetEGNCA, self).__init__()
         self.args = args
@@ -33,28 +36,38 @@ class FixedTargetEGNCA(torch.nn.Module):
         self.register_buffer('target_edges', target_edges)
         
         # * setup seed coords/hidden
-        num_nodes = target_coords.size(0)
-        seed_coords = torch.empty(num_nodes, args.coords_dim).normal_(std=0.5)
-        seed_hidden = torch.rand([seed_coords.shape[0], args.hidden_dim])
-        
-        # * [TODO] save seed data to file !!!
+        if new_model:
+            print ('[models.py] training new model -- creating starting seed')
+            num_nodes = target_coords.size(0)
+            seed_coords = torch.empty(num_nodes, args.coords_dim).normal_(std=0.5)
+            seed_hidden = torch.ones([seed_coords.shape[0], args.hidden_dim])
+            
+            # * save seed data to file
+            path = f'{args.save_to}/{args.model_name}'
+            if not os.path.exists(path):
+                os.makedirs(path)
+            np.save(f'{path}/seed_coords.npy', np.array(seed_coords))
+            np.save(f'{path}/seed_hidden.npy', np.array(seed_hidden))
+            
+        else:
+            print ('[models.py] loading pre-trained model -- loading starting seed')
+            seed_coords, seed_hidden = self.get_seed()
         
         self.normalise = PairNorm(scale=1.0)
         self.mse = torch.nn.MSELoss(reduction='none')
-        
         self.egnn = egnn([
             egc(args.coords_dim, 
                 args.hidden_dim, 
                 args.message_dim,
                 has_attention=args.has_attention),
         ]).to(args.device)
-        
         self.pool = TrainPool(
             pool_size=args.pool_size,
             seed_coords=seed_coords,
             seed_hidden=seed_hidden,
+            target_coords=target_coords,
+            loss_func=self.mse,
         )
-        
         self.optimizer = torch.optim.Adam(
             self.egnn.parameters(), 
             lr=self.args.lr, 
@@ -67,6 +80,16 @@ class FixedTargetEGNCA(torch.nn.Module):
             patience=self.args.patience_sch,
             min_lr=1e-5,
         )
+        
+    def get_seed(
+        self,
+    ):
+        path = f'{self.args.save_to}/{self.args.model_name}'
+        seed_coords = np.load(f'{path}/seed_coords.npy')
+        seed_hidden = np.load(f'{path}/seed_hidden.npy')
+        seed_coords = torch.tensor(seed_coords).to(self.args.device)
+        seed_hidden = torch.tensor(seed_hidden).to(self.args.device)
+        return seed_coords, seed_hidden
         
     def forward(
         self,
@@ -87,44 +110,33 @@ class FixedTargetEGNCA(torch.nn.Module):
         path: str,
         name: str
     ):
-        import os
-        import json
-        
-        # * create directory
         if not os.path.exists(path):
             os.makedirs(path)
-            
-        # * save model
         torch.save(self.state_dict(), f'{path}/{name}.pt')
-        
-        # * save args
         with open(f'{path}/args.txt', 'w') as f:
             json.dump(self.args.__dict__, f, indent=2, default=lambda o: '<not serializable>')
-            
         print (f'[models.py] saved model to: {path}')
         
     def run_for(
         self,
         num_steps: int,
     ):
-        coords, hidden = self.pool.get_seed()
-        coords = coords.to(self.args.device)
-        hidden = hidden.to(self.args.device)
+        coords, hidden = self.get_seed()
         edges = self.target_edges.clone().to(self.args.device)
+        target_coords = self.target_coords.clone().to(self.args.device)
+        target_edges = torch.norm(target_coords[edges[0]] - target_coords[edges[1]], dim=-1)
         
         with torch.no_grad():
             for _ in range(num_steps):
                 coords, hidden = self.forward(coords, hidden, edges)
-                
-            # * calculate loss
+
             edge_lens = torch.norm(coords[edges[0]] - coords[edges[1]], dim=-1)
-            loss_per_edge = self.mse(edge_lens, edges)
-            loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge])
-            loss = loss_per_graph.mean()
+            loss_per_edge = self.mse(edge_lens, target_edges)
+            loss = loss_per_edge.mean()
             
         return coords, edges, loss.item()
     
-    def train(
+    def train_model(
         self,
         verbose: bool=False,
     ):
@@ -136,7 +148,7 @@ class FixedTargetEGNCA(torch.nn.Module):
             batch_coords, \
             batch_hidden, \
             rand_edges, \
-            rand_edges_lens = self.pool.get_batch(self.args.batch_size)
+            rand_target_edges_lens = self.pool.get_batch(self.args.batch_size)
             
             # * run for n steps
             n_steps = np.random.randint(self.args.min_steps, self.args.max_steps+1)
@@ -145,10 +157,10 @@ class FixedTargetEGNCA(torch.nn.Module):
             
             # * calculate loss
             edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
-            loss_per_edge = self.mse(edge_lens, rand_edges_lens)
+            loss_per_edge = self.mse(edge_lens, rand_target_edges_lens)
             loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
             loss = loss_per_graph.mean()
-
+            
             # * backward pass
             with torch.no_grad():
                 self.optimizer.zero_grad()
@@ -162,8 +174,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                     batch_hidden
                 )
                 
-                loss = loss.item() * 1_000_000
-                
+                loss = loss.item()
                 if i!= 0.0:
                     self.loss_log.append(loss)
                 
@@ -178,7 +189,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                     lr = np.round(self.lr_scheduler.get_last_lr()[0], 8)
                     
                     if (verbose): 
-                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg, 6)}>{np.round(np.min(self.loss_log), 6)}\t lr: {lr}')
+                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg, 8)}>{np.round(np.min(self.loss_log), 8)}\t lr: {lr}')
                     
                 if i % self.args.save_rate == 0 and i != 0:
                     # self.save_model('_checkpoints', model, _NAME_+'_cp'+str(i))
@@ -222,7 +233,7 @@ def test_model_training(
         
         # * create and train model
         fixed_target_egnca = FixedTargetEGNCA(args)
-        fixed_target_egnca.train(verbose=False)
+        fixed_target_egnca.train_model(verbose=False)
         
         if (verbose): print(f'[models.py] test {i} complete')
             

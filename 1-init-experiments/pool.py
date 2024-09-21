@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Optional
 import numpy as np
 import torch
@@ -9,10 +10,13 @@ class TrainPool:
         pool_size: int,
         seed_coords: torch.Tensor,
         seed_hidden: torch.Tensor,
+        target_coords: torch.Tensor,
+        loss_func: Callable[[torch.Tensor, torch.Tensor], float],
         rand_edge_percent: float = 1.0,
         device: Optional[str] = 'cuda'
     ):
         self.pool_size = pool_size
+        self.loss_func = loss_func
         self.device = device
         self.seed = (seed_coords.clone(), seed_hidden.clone())
         self.cache = dict()
@@ -25,43 +29,50 @@ class TrainPool:
         self.num_nodes = seed_coords.size(0)
         self.all_edges = torch.ones(self.num_nodes, self.num_nodes).tril(-1).nonzero().T
         row, col = self.all_edges[0], self.all_edges[1]
-        self.all_edge_lens = torch.norm(seed_coords[row] - seed_coords[col], dim=-1)
+        self.all_edge_lens = torch.norm(target_coords[row] - target_coords[col], dim=-1)
         self.num_rand_edges = int(self.rand_edge_percent * self.all_edges.size(1))
-        
-    def get_seed(
-        self,
-    ):
-        return self.seed[0].clone(), self.seed[1].clone()
     
     def get_batch(
         self,
         batch_size: int,
         replace_lowest_loss: bool = True
     ):
+        # * extract batch from pool
         batch_ids = np.random.choice(self.pool_size, batch_size, replace=False)
         batch_coords = self.cache['coords'][batch_ids].clone().to(self.device)
         batch_hidden = self.cache['hidden'][batch_ids].clone().to(self.device)
         
-        # * re-order batch based on loss
+        # * get random edges
+        perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
+        rand_target_edges = self.all_edges[:, perm]
+        rand_target_edges.to(self.device)
+        rand_target_edges_lens = self.all_edge_lens[perm]
+        rand_target_edges_lens = rand_target_edges_lens.to(self.device)
+        
+        # * compute loss for each graph in batch
         if replace_lowest_loss:
-            pass
-            # loss_ranks = torch.argsort(voxutil.voxel_wise_loss_function(x, target_ten, _dims=[-1, -2, -3, -4]), descending=True)
-            # x = x[loss_ranks]
+            loss_per_graph = [0.0] * batch_size
+            for i in range(batch_size):
+                edge_lens = torch.norm(batch_coords[i, rand_target_edges[0]] - batch_coords[i, rand_target_edges[1]], dim=-1)
+                loss_per_edge = self.loss_func(edge_lens, rand_target_edges_lens)
+                loss_per_graph[i] = float(loss_per_edge.mean())
+            loss_per_graph = np.array(loss_per_graph)
+            loss_ranks = np.argsort(loss_per_graph)
+            
+            # * re-order batch based on loss
+            batch_coords = batch_coords[loss_ranks]
+            batch_hidden = batch_hidden[loss_ranks]
+            
             # # * re-add seed into batch
-            # x[:1] = seed_ten
+            seed_coords, seed_hidden = self.seed
+            batch_coords[0] = seed_coords.clone().to(self.device)
+            batch_hidden[0] = seed_hidden.clone().to(self.device)
         
         # * squish batches into one dim
         batch_coords = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
         batch_hidden = batch_hidden.reshape([batch_size*batch_hidden.shape[1], batch_hidden.shape[2]])
-
-        # * get random edges
-        perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
-        rand_edges = self.all_edges[:, perm]
-        rand_edges.to(self.device)
-        rand_edges_lens = self.all_edge_lens[perm]
-        rand_edges_lens = rand_edges_lens.to(self.device)
-            
-        return batch_ids, batch_coords, batch_hidden, rand_edges, rand_edges_lens
+        
+        return batch_ids, batch_coords, batch_hidden, rand_target_edges, rand_target_edges_lens
     
     def update_pool(
         self,
