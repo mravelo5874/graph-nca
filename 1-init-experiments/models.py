@@ -26,8 +26,9 @@ class FixedTargetEGNCA(torch.nn.Module):
         self.register_buffer('target_coords', args.target_coords * args.scale)
         self.register_buffer('target_edges', args.target_edges)
         
-        # * [TODO] change this later
-        seed_coords = args.target_coords
+        # * setup seed coords/hidden
+        num_nodes = args.target_coords.size(0)
+        seed_coords = torch.empty(num_nodes, args.coords_dim).normal_(std=0.5)
         seed_hidden = torch.rand([seed_coords.shape[0], args.hidden_dim])
         
         self.normalise = PairNorm(scale=1.0)
@@ -64,11 +65,7 @@ class FixedTargetEGNCA(torch.nn.Module):
         batch_coords: torch.Tensor,
         batch_hidden: torch.Tensor,
         edges: torch.LongTensor
-    ):
-        # print (f'batch_coords.shape: {batch_coords.shape}')
-        # print (f'batch_hidden.shape: {batch_hidden.shape}')
-        # print (f'edges.shape: {edges.shape}')
-        
+    ):        
         out_coords, out_hidden = self.egnn(
             coords=batch_coords,
             hidden=batch_hidden,
@@ -96,16 +93,10 @@ class FixedTargetEGNCA(torch.nn.Module):
             
             # * calculate loss
             edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
-        
-            # print (f'edge_weight.dtype: {edge_weight.dtype}')
-            # print (f'edge_weight.device: {edge_weight.device}')
-            # print (f'rand_edge_weight.dtype: {rand_edge_weight.dtype}')
-            # print (f'rand_edge_weight.device: {rand_edge_weight.device}')
-            
             loss_per_edge = self.mse(edge_lens, rand_edges_lens)
             loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
             loss = loss_per_graph.mean()
-        
+
             # * backward pass
             with torch.no_grad():
                 self.optimizer.zero_grad()
@@ -118,7 +109,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                     batch_coords, 
                     batch_hidden
                 )
-                i_loss = loss.item()
+                i_loss = round(loss.item()*100_000, 6)
                 
                 if i % self.args.info_rate == 0 and i!= 0:
                     if (verbose): print (f'[{i}/{epochs}]\tloss: {i_loss}')

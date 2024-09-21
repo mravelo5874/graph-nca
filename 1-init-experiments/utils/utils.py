@@ -1,5 +1,5 @@
-import numpy as np
 from sklearn import neighbors
+import numpy as np
 
 def compute_connectivity(positions, radius, add_self_edges):
     """Get the indices of connected edges with radius connectivity.
