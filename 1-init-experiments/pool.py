@@ -14,6 +14,7 @@ class TrainPool:
     ):
         self.pool_size = pool_size
         self.device = device
+        self.seed = (seed_coords.clone(), seed_hidden.clone())
         self.cache = dict()
         self.cache['coords'] = seed_coords.clone().repeat([pool_size, 1, 1])
         self.cache['hidden'] = seed_hidden.clone().repeat([pool_size, 1, 1])
@@ -26,6 +27,11 @@ class TrainPool:
         row, col = self.all_edges[0], self.all_edges[1]
         self.all_edge_lens = torch.norm(seed_coords[row] - seed_coords[col], dim=-1)
         self.num_rand_edges = int(self.rand_edge_percent * self.all_edges.size(1))
+        
+    def get_seed(
+        self,
+    ):
+        return self.seed[0].clone(), self.seed[1].clone()
     
     def get_batch(
         self,

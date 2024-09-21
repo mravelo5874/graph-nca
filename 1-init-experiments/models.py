@@ -1,8 +1,10 @@
+from data.generate import generate_line_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
 from pool import TrainPool
 from egnn import egnn, egc
 import numpy as np
+import datetime
 import torch
 
 class MorphogenicEGNCA(torch.nn.Module):
@@ -23,13 +25,19 @@ class FixedTargetEGNCA(torch.nn.Module):
     ):
         super(FixedTargetEGNCA, self).__init__()
         self.args = args
-        self.register_buffer('target_coords', args.target_coords * args.scale)
-        self.register_buffer('target_edges', args.target_edges)
+        
+        if args.graph == 'line':
+            target_coords, target_edges = generate_line_graph(8)
+        
+        self.register_buffer('target_coords', target_coords * args.scale)
+        self.register_buffer('target_edges', target_edges)
         
         # * setup seed coords/hidden
-        num_nodes = args.target_coords.size(0)
+        num_nodes = target_coords.size(0)
         seed_coords = torch.empty(num_nodes, args.coords_dim).normal_(std=0.5)
         seed_hidden = torch.rand([seed_coords.shape[0], args.hidden_dim])
+        
+        # * [TODO] save seed data to file !!!
         
         self.normalise = PairNorm(scale=1.0)
         self.mse = torch.nn.MSELoss(reduction='none')
@@ -74,10 +82,54 @@ class FixedTargetEGNCA(torch.nn.Module):
         out_hidden = self.normalise(out_hidden)
         return out_coords, out_hidden
     
+    def save(
+        self,
+        path: str,
+        name: str
+    ):
+        import os
+        import json
+        
+        # * create directory
+        if not os.path.exists(path):
+            os.makedirs(path)
+            
+        # * save model
+        torch.save(self.state_dict(), f'{path}/{name}.pt')
+        
+        # * save args
+        with open(f'{path}/args.txt', 'w') as f:
+            json.dump(self.args.__dict__, f, indent=2, default=lambda o: '<not serializable>')
+            
+        print (f'[models.py] saved model to: {path}')
+        
+    def run_for(
+        self,
+        num_steps: int,
+    ):
+        coords, hidden = self.pool.get_seed()
+        coords = coords.to(self.args.device)
+        hidden = hidden.to(self.args.device)
+        edges = self.target_edges.clone().to(self.args.device)
+        
+        with torch.no_grad():
+            for _ in range(num_steps):
+                coords, hidden = self.forward(coords, hidden, edges)
+                
+            # * calculate loss
+            edge_lens = torch.norm(coords[edges[0]] - coords[edges[1]], dim=-1)
+            loss_per_edge = self.mse(edge_lens, edges)
+            loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge])
+            loss = loss_per_graph.mean()
+            
+        return coords, edges, loss.item()
+    
     def train(
         self,
         verbose: bool=False,
     ):
+        train_start = datetime.datetime.now()
+        self.loss_log = []
         epochs = self.args.epochs+1
         for i in range(epochs):
             batch_ids, \
@@ -109,10 +161,24 @@ class FixedTargetEGNCA(torch.nn.Module):
                     batch_coords, 
                     batch_hidden
                 )
-                i_loss = round(loss.item()*100_000, 6)
+                
+                loss = loss.item() * 1_000_000
+                
+                if i!= 0.0:
+                    self.loss_log.append(loss)
                 
                 if i % self.args.info_rate == 0 and i!= 0:
-                    if (verbose): print (f'[{i}/{epochs}]\tloss: {i_loss}')
+                    secs = (datetime.datetime.now()-train_start).seconds
+                    if secs == 0: secs = 1
+                    time = str(datetime.timedelta(seconds=secs))
+                    iter_per_sec = float(i)/float(secs)
+                    est_time_sec = int((epochs-i)*(1/iter_per_sec))
+                    est = str(datetime.timedelta(seconds=est_time_sec))
+                    avg = sum(self.loss_log[-self.args.info_rate:])/float(self.args.info_rate)
+                    lr = np.round(self.lr_scheduler.get_last_lr()[0], 8)
+                    
+                    if (verbose): 
+                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg, 6)}>{np.round(np.min(self.loss_log), 6)}\t lr: {lr}')
                     
                 if i % self.args.save_rate == 0 and i != 0:
                     # self.save_model('_checkpoints', model, _NAME_+'_cp'+str(i))
