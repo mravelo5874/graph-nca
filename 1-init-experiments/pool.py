@@ -57,11 +57,12 @@ class TrainPool:
                 loss_per_edge = self.loss_func(edge_lens, rand_target_edges_lens)
                 loss_per_graph[i] = float(loss_per_edge.mean())
             loss_per_graph = np.array(loss_per_graph)
-            loss_ranks = np.argsort(loss_per_graph)
+            loss_ranks = np.argsort(loss_per_graph)[::-1]
+            reordered = loss_per_graph[loss_ranks]
             
             # * re-order batch based on loss
-            batch_coords = batch_coords[loss_ranks]
-            batch_hidden = batch_hidden[loss_ranks]
+            batch_coords = batch_coords[loss_ranks.copy()]
+            batch_hidden = batch_hidden[loss_ranks.copy()]
             
             # # * re-add seed into batch
             seed_coords, seed_hidden = self.seed
