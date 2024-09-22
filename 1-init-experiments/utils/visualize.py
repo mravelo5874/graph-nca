@@ -76,4 +76,7 @@ def plot_multiple_graphs(
         
     layout = go.Layout(margin={'l': 0, 'r': 0, 'b': 0, 't': 0})
     return go.Figure(data=all_data, layout=layout)
-        
+
+# * view graph evolution
+def evolve():
+    pass

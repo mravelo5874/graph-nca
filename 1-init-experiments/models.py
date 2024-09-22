@@ -1,4 +1,4 @@
-from data.generate import generate_line_graph
+from data.generate import generate_line_graph, generate_square_plane_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
 from pool import TrainPool
@@ -30,7 +30,11 @@ class FixedTargetEGNCA(torch.nn.Module):
         self.args = args
         
         if args.graph == 'line':
-            target_coords, target_edges = generate_line_graph(8)
+            target_coords, target_edges = generate_line_graph(args.size)
+        elif args.graph == 'grid':
+            target_coords, target_edges = generate_square_plane_graph(args.size)
+
+        print (f'[models.py] target_coords.shape: {target_coords.shape}, target_edges.shape: {target_edges.shape}')
         
         self.register_buffer('target_coords', target_coords * args.scale)
         self.register_buffer('target_edges', target_edges)
@@ -40,18 +44,19 @@ class FixedTargetEGNCA(torch.nn.Module):
             print ('[models.py] training new model -- creating starting seed')
             num_nodes = target_coords.size(0)
             seed_coords = torch.empty(num_nodes, args.coords_dim).normal_(std=0.5)
-            seed_hidden = torch.ones([seed_coords.shape[0], args.hidden_dim])
             
             # * save seed data to file
             path = f'{args.save_to}/{args.model_name}'
             if not os.path.exists(path):
                 os.makedirs(path)
             np.save(f'{path}/seed_coords.npy', np.array(seed_coords))
-            np.save(f'{path}/seed_hidden.npy', np.array(seed_hidden))
             
         else:
             print ('[models.py] loading pre-trained model -- loading starting seed')
-            seed_coords, seed_hidden = self.get_seed()
+        
+        # * load in seed for consistency when evaluating
+        seed_coords = np.load(f'{self.args.save_to}/{self.args.model_name}/seed_coords.npy')
+        seed_coords = torch.tensor(seed_coords).to(self.args.device)
         
         self.normalise = PairNorm(scale=1.0)
         self.mse = torch.nn.MSELoss(reduction='none')
@@ -63,10 +68,11 @@ class FixedTargetEGNCA(torch.nn.Module):
         ]).to(args.device)
         self.pool = TrainPool(
             pool_size=args.pool_size,
+            hidden_dim=args.hidden_dim,
             seed_coords=seed_coords,
-            seed_hidden=seed_hidden,
             target_coords=target_coords,
             loss_func=self.mse,
+            reset_at=args.reset_at,
         )
         self.optimizer = torch.optim.Adam(
             self.egnn.parameters(), 
@@ -80,16 +86,6 @@ class FixedTargetEGNCA(torch.nn.Module):
             patience=self.args.patience_sch,
             min_lr=1e-5,
         )
-        
-    def get_seed(
-        self,
-    ):
-        path = f'{self.args.save_to}/{self.args.model_name}'
-        seed_coords = np.load(f'{path}/seed_coords.npy')
-        seed_hidden = np.load(f'{path}/seed_hidden.npy')
-        seed_coords = torch.tensor(seed_coords).to(self.args.device)
-        seed_hidden = torch.tensor(seed_hidden).to(self.args.device)
-        return seed_coords, seed_hidden
         
     def forward(
         self,
@@ -108,52 +104,75 @@ class FixedTargetEGNCA(torch.nn.Module):
     def save(
         self,
         path: str,
-        name: str
+        name: str,
+        verbose: bool = True
     ):
         if not os.path.exists(path):
             os.makedirs(path)
         torch.save(self.state_dict(), f'{path}/{name}.pt')
         with open(f'{path}/args.txt', 'w') as f:
             json.dump(self.args.__dict__, f, indent=2, default=lambda o: '<not serializable>')
-        print (f'[models.py] saved model to: {path}')
+        if verbose: print (f'[models.py] saved model to: {path}')
+    
+    def get_random_pool_graph(
+        self,
+    ):
+        index = np.random.randint(0, self.args.pool_size)
+        coords = self.pool.cache['coords'][index]
+        edges = self.target_edges.clone()
+        steps = self.pool.cache['steps'][index]
+        return index, coords, edges, steps
         
     def run_for(
         self,
         num_steps: int,
+        collect_all: bool = False
     ):
-        coords, hidden = self.get_seed()
-        edges = self.target_edges.clone().to(self.args.device)
-        target_coords = self.target_coords.clone().to(self.args.device)
-        target_edges = torch.norm(target_coords[edges[0]] - target_coords[edges[1]], dim=-1)
+        seed_coords, seed_hidden = self.pool.seed
+        coords = seed_coords.clone().to(self.args.device)
+        hidden = seed_hidden.clone().to(self.args.device)
+        edges = self.target_edges.to(self.args.device)
         
+        coords_collection = []
+        if collect_all: coords_collection.append(coords)
+    
         with torch.no_grad():
             for _ in range(num_steps):
                 coords, hidden = self.forward(coords, hidden, edges)
+                if collect_all: coords_collection.append(coords)
 
-            edge_lens = torch.norm(coords[edges[0]] - coords[edges[1]], dim=-1)
-            loss_per_edge = self.mse(edge_lens, target_edges)
-            loss = loss_per_edge.mean()
-            
-        return coords, edges, loss.item()
+            rand_target_edges, rand_target_edges_lens = self.pool.get_random_edges()
+            edge_lens = torch.norm(coords[rand_target_edges[0]] - coords[rand_target_edges[1]], dim=-1)
+            loss_per_edge = self.mse(edge_lens, rand_target_edges_lens)
+            loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
+            loss = loss_per_graph.mean()
+        
+
+        return coords, edges, loss.item(), coords_collection
     
     def train_model(
         self,
         verbose: bool=False,
+        view_random_graphs: bool=False,
     ):
         train_start = datetime.datetime.now()
-        self.loss_log = []
+        loss_log = []
+        min_avg_loss = 1e100
+        best_model_path = None
         epochs = self.args.epochs+1
+        
         for i in range(epochs):
             batch_ids, \
             batch_coords, \
             batch_hidden, \
             rand_edges, \
             rand_target_edges_lens = self.pool.get_batch(self.args.batch_size)
-            
+            edges = self.target_edges.to(self.args.device)
+                    
             # * run for n steps
             n_steps = np.random.randint(self.args.min_steps, self.args.max_steps+1)
             for _ in range(n_steps):
-                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, self.target_edges.to(self.args.device))
+                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges)
             
             # * calculate loss
             edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
@@ -171,12 +190,18 @@ class FixedTargetEGNCA(torch.nn.Module):
                     self.args.batch_size, 
                     batch_ids, 
                     batch_coords, 
-                    batch_hidden
+                    batch_hidden,
+                    n_steps,
                 )
                 
-                loss = loss.item()
-                if i!= 0.0:
-                    self.loss_log.append(loss)
+                # * calc loss and average loss
+                _loss = loss.item()
+                if not torch.isnan(loss) and not torch.isinf(loss) and not torch.isneginf(loss) and loss != 0.0:
+                    loss_log.append(_loss)
+                else:
+                    print (f'[model.py] detected invalid loss value: {loss} -- stopping training')
+                    return
+                avg_loss = sum(loss_log[-self.args.info_rate:])/float(self.args.info_rate)
                 
                 if i % self.args.info_rate == 0 and i!= 0:
                     secs = (datetime.datetime.now()-train_start).seconds
@@ -185,15 +210,52 @@ class FixedTargetEGNCA(torch.nn.Module):
                     iter_per_sec = float(i)/float(secs)
                     est_time_sec = int((epochs-i)*(1/iter_per_sec))
                     est = str(datetime.timedelta(seconds=est_time_sec))
-                    avg = sum(self.loss_log[-self.args.info_rate:])/float(self.args.info_rate)
                     lr = np.round(self.lr_scheduler.get_last_lr()[0], 8)
                     
-                    if (verbose): 
-                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg, 8)}>{np.round(np.min(self.loss_log), 8)}\t lr: {lr}')
-                    
-                if i % self.args.save_rate == 0 and i != 0:
-                    # self.save_model('_checkpoints', model, _NAME_+'_cp'+str(i))
-                    pass
+                    if verbose: 
+                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+                    if view_random_graphs:
+                        from IPython.display import clear_output
+                        from utils.visualize import plot_multiple_graphs
+                        import plotly
+                        
+                        clear_output()
+                        trgt_coords = self.target_coords
+                        index, pred_coords, edges, steps = self.get_random_pool_graph()
+                        seed_coords, _ = self.pool.seed
+                        print (f'graph {index} steps: {steps}')
+                        plotly.offline.init_notebook_mode()
+                        fig = plot_multiple_graphs([
+                            (trgt_coords, edges),
+                            (pred_coords, edges),
+                            (seed_coords, edges),
+                        ])
+                        plotly.offline.iplot(fig)
+                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+
+                        # * show "run for" graph
+                        r_coords, _, r_loss = self.run_for(steps)
+                        fig = plot_multiple_graphs([
+                            (trgt_coords, edges),
+                            (r_coords, edges),
+                            (seed_coords, edges),
+                        ])
+                        plotly.offline.iplot(fig)
+                        print (f'run_for({steps}) loss: {r_loss}')
+                        
+                        
+                # * save if minimun average loss detected
+                if avg_loss < min_avg_loss and i > self.args.info_rate+1:
+                    min_avg_loss = avg_loss
+                    if best_model_path != None:
+                        os.remove(best_model_path)
+                    best_model_path = '/'.join([self.args.save_to, self.args.model_name]) + f'/best-{i}.pt'
+                    print (f'[models.py] detected minimum average loss during training: {np.round(min_avg_loss, 3)} -- saving model to: {best_model_path}')
+                    self.save(
+                        path='/'.join([self.args.save_to, self.args.model_name]),
+                        name=f'best-{i}',
+                        verbose=False,
+                    )
                     
 def test_model_training(
     num_tests: int = 10,

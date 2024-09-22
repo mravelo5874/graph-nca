@@ -8,21 +8,21 @@ class TrainPool:
     def __init__(
         self,
         pool_size: int,
+        hidden_dim: int,
         seed_coords: torch.Tensor,
-        seed_hidden: torch.Tensor,
         target_coords: torch.Tensor,
         loss_func: Callable[[torch.Tensor, torch.Tensor], float],
         rand_edge_percent: float = 1.0,
-        device: Optional[str] = 'cuda'
+        device: Optional[str] = 'cuda',
+        reset_at: Optional[int] = float('inf')
     ):
         self.pool_size = pool_size
         self.loss_func = loss_func
         self.device = device
+        self.reset_at = reset_at
+        seed_hidden = torch.ones([seed_coords.shape[0], hidden_dim])
         self.seed = (seed_coords.clone(), seed_hidden.clone())
-        self.cache = dict()
-        self.cache['coords'] = seed_coords.clone().repeat([pool_size, 1, 1])
-        self.cache['hidden'] = seed_hidden.clone().repeat([pool_size, 1, 1])
-        self.cache['iters'] = [0] * pool_size
+        self.reset()
         
         # * dataset stuff
         self.rand_edge_percent = rand_edge_percent
@@ -31,6 +31,21 @@ class TrainPool:
         row, col = self.all_edges[0], self.all_edges[1]
         self.all_edge_lens = torch.norm(target_coords[row] - target_coords[col], dim=-1)
         self.num_rand_edges = int(self.rand_edge_percent * self.all_edges.size(1))
+        
+    def reset(self):
+        seed_coords, seed_hidden = self.seed
+        seed_coords = seed_coords.clone().to('cpu')
+        seed_hidden = seed_hidden.clone().to('cpu')
+        self.cache = dict()
+        self.cache['coords'] = seed_coords.clone().repeat([self.pool_size, 1, 1])
+        self.cache['hidden'] = seed_hidden.clone().repeat([self.pool_size, 1, 1])
+        self.cache['steps'] = [0] * self.pool_size
+        
+    def get_random_edges(self):
+        perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
+        rand_target_edges = self.all_edges[:, perm].clone().to(self.device)
+        rand_target_edges_lens = self.all_edge_lens[perm].clone().to(self.device)
+        return rand_target_edges, rand_target_edges_lens
     
     def get_batch(
         self,
@@ -43,11 +58,7 @@ class TrainPool:
         batch_hidden = self.cache['hidden'][batch_ids].clone().to(self.device)
         
         # * get random edges
-        perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
-        rand_target_edges = self.all_edges[:, perm]
-        rand_target_edges.to(self.device)
-        rand_target_edges_lens = self.all_edge_lens[perm]
-        rand_target_edges_lens = rand_target_edges_lens.to(self.device)
+        rand_target_edges, rand_target_edges_lens = self.get_random_edges()
         
         # * compute loss for each graph in batch
         if replace_lowest_loss:
@@ -58,17 +69,24 @@ class TrainPool:
                 loss_per_graph[i] = float(loss_per_edge.mean())
             loss_per_graph = np.array(loss_per_graph)
             loss_ranks = np.argsort(loss_per_graph)[::-1]
-            reordered = loss_per_graph[loss_ranks]
             
             # * re-order batch based on loss
             batch_coords = batch_coords[loss_ranks.copy()]
             batch_hidden = batch_hidden[loss_ranks.copy()]
+            batch_ids = batch_ids[loss_ranks.copy()]
             
-            # # * re-add seed into batch
+            # # * re-add seed into batch (highest loss)
             seed_coords, seed_hidden = self.seed
             batch_coords[0] = seed_coords.clone().to(self.device)
             batch_hidden[0] = seed_hidden.clone().to(self.device)
-        
+            self.cache['steps'][batch_ids[0]] = 0
+            
+            # * check for reset graphs (re-add seed)
+            for i, id in enumerate(batch_ids):
+                if self.cache['steps'][id] > self.reset_at:
+                    batch_coords[i] = seed_coords.clone().to(self.device)
+                    batch_hidden[i] = seed_hidden.clone().to(self.device)
+                    
         # * squish batches into one dim
         batch_coords = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
         batch_hidden = batch_hidden.reshape([batch_size*batch_hidden.shape[1], batch_hidden.shape[2]])
@@ -80,7 +98,8 @@ class TrainPool:
         batch_size: int,
         batch_ids: np.ndarray[int],
         batch_coords: torch.Tensor,
-        batch_hidden: torch.Tensor
+        batch_hidden: torch.Tensor,
+        steps: int,
     ):
         # * unsquish batches
         batch_coords = batch_coords.reshape([batch_size, batch_coords.shape[0]//batch_size, batch_coords.shape[1]])
@@ -89,6 +108,10 @@ class TrainPool:
         # * replace in pool cache
         self.cache['coords'][batch_ids] = batch_coords.detach().cpu()
         self.cache['hidden'][batch_ids] = batch_hidden.detach().cpu()
+        
+        # * update steps
+        for i in batch_ids:
+            self.cache['steps'][i] += steps
         
 def test_pool_functionality(
     num_tests: int = 100,
