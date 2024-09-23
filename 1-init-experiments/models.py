@@ -1,4 +1,4 @@
-from data.generate import generate_line_graph, generate_square_plane_graph
+from data.generate import generate_line_graph, generate_square_plane_graph, generate_bunny_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
 from pool import TrainPool
@@ -33,7 +33,12 @@ class FixedTargetEGNCA(torch.nn.Module):
             target_coords, target_edges = generate_line_graph(args.size)
         elif args.graph == 'grid':
             target_coords, target_edges = generate_square_plane_graph(args.size)
-
+        elif args.graph == 'bunny':
+            target_coords, target_edges = generate_bunny_graph()
+        else:
+            print (f'[models.py] invalid graph: {args.graph}')
+            return
+            
         print (f'[models.py] target_coords.shape: {target_coords.shape}, target_edges.shape: {target_edges.shape}')
         
         self.register_buffer('target_coords', target_coords * args.scale)
@@ -147,7 +152,6 @@ class FixedTargetEGNCA(torch.nn.Module):
             loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
             loss = loss_per_graph.mean()
         
-
         return coords, edges, loss.item(), coords_collection
     
     def train_model(
@@ -234,7 +238,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                         print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
 
                         # * show "run for" graph
-                        r_coords, _, r_loss = self.run_for(steps)
+                        r_coords, _, r_loss, _ = self.run_for(steps)
                         fig = plot_multiple_graphs([
                             (trgt_coords, edges),
                             (r_coords, edges),

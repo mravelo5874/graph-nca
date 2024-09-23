@@ -28,3 +28,20 @@ def compute_connectivity(positions, radius, add_self_edges):
         receivers = receivers[mask]
 
     return senders, receivers
+
+def furthest_point_dist(
+        point_cloud: np.ndarray[float],
+        center: np.ndarray[float] = np.array([0.0, 0.0, 0.0])
+    ):
+    max_distance = 0
+    furthest_point = None
+    assert point_cloud.shape[1] == 3
+
+    for i in range(point_cloud.shape[0]):
+        point = point_cloud[i]
+        distance = np.linalg.norm(point-center)  # Calculate Euclidean distance
+        if distance > max_distance:
+            max_distance = distance
+            furthest_point = point
+
+    return furthest_point, max_distance
