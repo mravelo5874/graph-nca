@@ -29,15 +29,15 @@ def generate_square_plane_graph(
     edges = torch.argwhere(dist <= dist.min() + 0.001).T
     return coords, edges.long()
 
+def generate_cube_graph():
+    raise NotImplementedError
+
+def generate_sphere_graph():
+    raise NotImplementedError
+
 def generate_bunny_graph() -> Tuple[torch.Tensor, torch.LongTensor]:
     path = os.path.realpath(__file__).replace('\\generate.py', '')
     coords = torch.tensor(np.load(f'{path}/bunny/bunny-coords.npy'), dtype=torch.float32)
     coords = (coords - coords.mean(0)) / coords.std(0)
     edges = torch.tensor(np.load(f'{path}/bunny/bunny-edges.npy'), dtype=torch.int64)
     return coords, edges
-
-def generate_cube_graph():
-    raise NotImplementedError
-
-def generate_sphere_graph():
-    raise NotImplementedError
