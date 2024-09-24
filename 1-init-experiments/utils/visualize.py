@@ -69,6 +69,7 @@ def create_ploty_figure(
     else:
         layout = go.Layout(
             margin={'l': 0, 'r': 0, 'b': 0, 't': 35},
+            scene={'camera': dict(eye=dict(x=0.5, y=0.5, z=0.5))},
             title=title
         )
         return go.Figure(data=data, layout=layout)

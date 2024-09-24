@@ -1,6 +1,7 @@
 from data.generate import generate_line_graph, generate_square_plane_graph, generate_bunny_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
+from typing import Optional
 from pool import TrainPool
 from egnn import egnn, egc
 import numpy as np
@@ -66,8 +67,7 @@ class FixedTargetEGNCA(torch.nn.Module):
         self.normalise = PairNorm(scale=1.0)
         self.mse = torch.nn.MSELoss(reduction='none')
         self.egnn = egnn([
-            egc(args.coords_dim, 
-                args.hidden_dim, 
+            egc(args.hidden_dim, 
                 args.message_dim,
                 has_attention=args.has_attention),
         ]).to(args.device)
@@ -96,12 +96,14 @@ class FixedTargetEGNCA(torch.nn.Module):
         self,
         batch_coords: torch.Tensor,
         batch_hidden: torch.Tensor,
-        edges: torch.LongTensor
+        edges: torch.LongTensor,
+        verbose: Optional[bool] = False
     ):        
         out_coords, out_hidden = self.egnn(
             coords=batch_coords,
             hidden=batch_hidden,
             edges=edges,
+            verbose=verbose,
         )
         out_hidden = self.normalise(out_hidden)
         return out_coords, out_hidden
@@ -110,7 +112,7 @@ class FixedTargetEGNCA(torch.nn.Module):
         self,
         path: str,
         name: str,
-        verbose: bool = True
+        verbose: Optional[bool] = True
     ):
         if not os.path.exists(path):
             os.makedirs(path)
@@ -122,7 +124,7 @@ class FixedTargetEGNCA(torch.nn.Module):
     def get_random_pool_graph(
         self,
     ):
-        index = np.random.randint(0, self.args.pool_size)
+        index = np.random.randint(self.args.pool_size)
         coords = self.pool.cache['coords'][index]
         edges = self.target_edges.clone()
         steps = self.pool.cache['steps'][index]
@@ -143,7 +145,7 @@ class FixedTargetEGNCA(torch.nn.Module):
     
         with torch.no_grad():
             for _ in range(num_steps):
-                coords, hidden = self.forward(coords, hidden, edges)
+                coords, hidden = self.forward(coords, hidden, edges, verbose=False)
                 if collect_all: coords_collection.append(coords)
 
             rand_target_edges, rand_target_edges_lens = self.pool.get_random_edges()
@@ -165,18 +167,25 @@ class FixedTargetEGNCA(torch.nn.Module):
         best_model_path = None
         epochs = self.args.epochs+1
         
+        # * create edges tensor
+        num_nodes = self.target_coords.shape[0]
+        edges = []
+        for i in range(self.args.batch_size):
+            batch_edges = self.target_edges.clone().add(i*num_nodes)
+            edges.append(batch_edges)
+        edges = torch.cat(edges, dim=1).to(self.args.device)
+                    
         for i in range(epochs):
             batch_ids, \
             batch_coords, \
             batch_hidden, \
             rand_edges, \
             rand_target_edges_lens = self.pool.get_batch(self.args.batch_size)
-            edges = self.target_edges.to(self.args.device)
                     
             # * run for n steps
             n_steps = np.random.randint(self.args.min_steps, self.args.max_steps+1)
             for _ in range(n_steps):
-                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges)
+                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges.to(self.args.device), verbose=False)
             
             # * calculate loss
             edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
@@ -216,15 +225,13 @@ class FixedTargetEGNCA(torch.nn.Module):
                     est = str(datetime.timedelta(seconds=est_time_sec))
                     lr = np.round(self.lr_scheduler.get_last_lr()[0], 8)
                     
-                    if verbose: 
-                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
                     if view_random_graphs:
                         from utils.visualize import create_ploty_figure_multiple, rgba_colors_list
                         from IPython.display import clear_output
                         from plotly.subplots import make_subplots
                         import plotly
                         
-                        clear_output()
+                        # clear_output()
                         trgt_coords = self.target_coords
                         index, pred_coords, edges, steps = self.get_random_pool_graph()
                         seed_coords, _ = self.pool.seed
@@ -236,7 +243,6 @@ class FixedTargetEGNCA(torch.nn.Module):
                             graphs=[(trgt_coords, edges),
                                     (pred_coords, edges),
                                     (seed_coords, edges)],
-                            title=f'pool graph #{index}, steps: {steps}, loss: {_loss}',
                             coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
                             edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
                         )
@@ -247,7 +253,6 @@ class FixedTargetEGNCA(torch.nn.Module):
                             graphs=[(trgt_coords, edges),
                                     (r_coords, edges),
                                     (seed_coords, edges)],
-                            title=f'run_for() graph, steps: {steps} loss: {r_loss}',
                             coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
                             edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
                         )
@@ -266,10 +271,10 @@ class FixedTargetEGNCA(torch.nn.Module):
                         for j in fig2.data :    
                             fig3.add_trace(j, row=1, col=2)
                         plotly.offline.iplot(fig3)
-                        
-                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+                    
+                    # * print out training stats
+                    if verbose: print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
 
-                        
                 # * save if minimun average loss detected
                 if avg_loss < min_avg_loss and i > self.args.info_rate+1:
                     min_avg_loss = avg_loss

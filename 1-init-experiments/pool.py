@@ -88,8 +88,14 @@ class TrainPool:
                     batch_hidden[i] = seed_hidden.clone().to(self.device)
                     
         # * squish batches into one dim
-        batch_coords = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
-        batch_hidden = batch_hidden.reshape([batch_size*batch_hidden.shape[1], batch_hidden.shape[2]])
+        # batch_coords_rs = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
+        # batch_hidden_rs = batch_hidden.reshape([batch_size*batch_hidden.shape[1], batch_hidden.shape[2]])
+        
+        batch_coords = batch_coords.view(-1, batch_coords.shape[2])
+        batch_hidden = batch_hidden.view(-1, batch_hidden.shape[2])
+        
+        # assert torch.equal(batch_coords_rs, batch_coords)
+        # assert torch.equal(batch_hidden_rs, batch_hidden)
         
         return batch_ids, batch_coords, batch_hidden, rand_target_edges, rand_target_edges_lens
     

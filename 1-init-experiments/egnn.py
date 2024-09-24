@@ -5,7 +5,6 @@ class egc(torch.nn.Module):
     
     def __init__(
         self,
-        coords_dim: int,
         hidden_dim: int,
         message_dim: int,
         out_hidden_dim: Optional[int] = None,
@@ -37,12 +36,13 @@ class egc(torch.nn.Module):
             torch.nn.Linear(message_dim, message_dim),
             act
         )
-        last_coords_layer = torch.nn.Linear(coords_dim, 1, bias=False)
+        last_coords_layer = torch.nn.Linear(message_dim, 1, bias=False)
         last_coords_layer.weight.data.zero_()
         self.coords_mlp = torch.nn.Sequential(
-            torch.nn.Linear(message_dim, coords_dim),
+            torch.nn.Linear(message_dim, message_dim),
             act,
-            last_coords_layer
+            last_coords_layer,
+            torch.nn.Tanh() if has_attention else torch.nn.Identity()
         )
         self.hidden_mlp = torch.nn.Sequential(
             torch.nn.Linear(message_dim + hidden_dim, message_dim),
@@ -64,7 +64,6 @@ class egc(torch.nn.Module):
         coords_n2 = torch.sum(coords_diff ** 2, 1, keepdim=True)
         if self.norm_n2:
             coords_diff = coords_diff / (torch.sqrt(coords_n2).detach() + 1)
-        
         return coords_diff.to(self.device), coords_n2.to(self.device)
     
     def aggregated_sum(
@@ -96,9 +95,6 @@ class egc(torch.nn.Module):
         else:
             edge_feat = torch.cat([hidden[edges[0]], hidden[edges[1]], coords_n2], dim=1).to(self.device)
 
-        # print (f'edge_feat.shape: {edge_feat.shape}')
-        # print (f'edge_feat.dtype: {edge_feat.dtype}')
-        
         # * run mlp
         out = self.message_mlp(edge_feat)
         
@@ -140,16 +136,25 @@ class egc(torch.nn.Module):
         hidden: torch.Tensor,
         edges: torch.LongTensor,
         edge_weight: Optional[torch.Tensor] = None,
-        edge_attr: Optional[torch.Tensor] = None
+        edge_attr: Optional[torch.Tensor] = None,
+        verbose: Optional[bool] = False
     ):
-        # print (f'coords.dtype: {coords.dtype}')
-        # print (f'hidden.dtype: {hidden.dtype}')
-        # print (f'edges.dtype: {edges.dtype}')
+        if verbose: print ('------------------------------')
+        if verbose: print (f'coords.shape: {coords.shape}')
+        if verbose: print (f'hidden.shape: {hidden.shape}')
+        if verbose: print (f'edges.shape: {edges.shape}')
         
         coords_diff, coords_n2 = self.get_coord_n2(coords, edges)
         edge_feat = self.run_message_mlp(hidden, coords_n2, edges, edge_weight, edge_attr)
         coords = self.run_coords_mlp(coords, coords_diff, edge_feat, edges)
         hidden = self.run_hidden_mlp(hidden, edge_feat, edges)
+        
+        if verbose: print (f'coords_diff.shape: {coords_diff.shape}')
+        if verbose: print (f'coords_n2.shape: {coords_n2.shape}')
+        if verbose: print (f'edge_feat.shape: {edge_feat.shape}')
+        if verbose: print (f'(returning) coords.shape: {coords.shape}')
+        if verbose: print (f'(returning) hidden.shape: {hidden.shape}')
+        
         return coords, hidden
 
 class egnn(torch.nn.Module):
@@ -168,10 +173,11 @@ class egnn(torch.nn.Module):
         edges: torch.LongTensor,
         edge_weight: Optional[torch.Tensor] = None,
         edge_attr: Optional[torch.Tensor] = None,
+        verbose: Optional[bool] = False,
     ):
         out = None
         for layer in self.layers:
-            out = layer(coords, hidden, edges, edge_weight, edge_attr)
+            out = layer(coords, hidden, edges, edge_weight, edge_attr, verbose)
             coords, hidden = out
         assert isinstance(out, tuple)
         return out
