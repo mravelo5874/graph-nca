@@ -219,34 +219,56 @@ class FixedTargetEGNCA(torch.nn.Module):
                     if verbose: 
                         print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
                     if view_random_graphs:
+                        from utils.visualize import create_ploty_figure_multiple, rgba_colors_list
                         from IPython.display import clear_output
-                        from utils.visualize import plot_multiple_graphs
+                        from plotly.subplots import make_subplots
                         import plotly
                         
                         clear_output()
                         trgt_coords = self.target_coords
                         index, pred_coords, edges, steps = self.get_random_pool_graph()
                         seed_coords, _ = self.pool.seed
-                        print (f'graph {index} steps: {steps}')
+                        seed_color = rgba_colors_list[4]
+                        seed_color[3] = 0
+                        print ()
                         plotly.offline.init_notebook_mode()
-                        fig = plot_multiple_graphs([
-                            (trgt_coords, edges),
-                            (pred_coords, edges),
-                            (seed_coords, edges),
-                        ])
-                        plotly.offline.iplot(fig)
-                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+                        fig1 = create_ploty_figure_multiple(
+                            graphs=[(trgt_coords, edges),
+                                    (pred_coords, edges),
+                                    (seed_coords, edges)],
+                            title=f'pool graph #{index}, steps: {steps}, loss: {_loss}',
+                            coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
+                            edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
+                        )
 
                         # * show "run for" graph
                         r_coords, _, r_loss, _ = self.run_for(steps)
-                        fig = plot_multiple_graphs([
-                            (trgt_coords, edges),
-                            (r_coords, edges),
-                            (seed_coords, edges),
-                        ])
-                        plotly.offline.iplot(fig)
-                        print (f'run_for({steps}) loss: {r_loss}')
+                        fig2 = create_ploty_figure_multiple(
+                            graphs=[(trgt_coords, edges),
+                                    (r_coords, edges),
+                                    (seed_coords, edges)],
+                            title=f'run_for() graph, steps: {steps} loss: {r_loss}',
+                            coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
+                            edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
+                        )
                         
+                        # * combine figures into one
+                        fig3 = make_subplots(
+                            rows=1, cols=2, 
+                            vertical_spacing=0.02, 
+                            specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
+                            subplot_titles=[
+                                f'pool graph #{index}, steps: {steps}, loss: {_loss}',
+                                f'run_for() graph, steps: {steps} loss: {r_loss}'
+                            ])
+                        for j in fig1.data :
+                            fig3.add_trace(j, row=1, col=1)
+                        for j in fig2.data :    
+                            fig3.add_trace(j, row=1, col=2)
+                        plotly.offline.iplot(fig3)
+                        
+                        print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+
                         
                 # * save if minimun average loss detected
                 if avg_loss < min_avg_loss and i > self.args.info_rate+1:

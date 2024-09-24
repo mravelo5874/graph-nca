@@ -6,32 +6,41 @@ import torch
 
 # * color palette
 # * https://coolors.co/006e90-adc698-ffac81-5f1a37-30011e
-colors_list = [
-    'rgb(  0,   110,    144)',
-    'rgb( 95,    26,     55)',
-    'rgb(  4,   167,    119)',
-    'rgb(245,   213,     71)',
-    'rgb(207,    92,     54)',
+rgba_colors_list = [
+    [0,     110,    144,    255],
+    [95,    26,     55,     255],
+    [4,     167,    119,    255],
+    [245,   213,    71,     255],
+    [207,   92,     4,      255],
 ]
 
 def create_ploty_figure(
     coords: torch.Tensor, 
     edges: torch.Tensor = None,
     return_ploty_data: bool = False,
-    transparency: float = 0.5,
-    coords_color: str = colors_list[0],
-    edges_color: str = colors_list[0],
+    title: str = 'My Graph',
+    coords_color: List[int] = rgba_colors_list[0],
+    coord_size: int = 2,
+    show_edges: bool = True,
+    edges_color: List[int] = rgba_colors_list[0],
+    edges_size: int = 2,
 ):
+    assert len(coords_color) == 4
+    assert len(edges_color) == 4
     x, y, z = np.split(coords.cpu().numpy(), 3, 1)
     coords_plot_data = go.Scatter3d(
         x=x.squeeze(1).tolist(),
         y=y.squeeze(1).tolist(),
         z=z.squeeze(1).tolist(),
         mode='markers',
-        marker={'size': 4, 'opacity': transparency, 'color': coords_color}
+        marker={
+            'size': coord_size, 
+            'opacity': float(coords_color[3])/255.0, 
+            'color': f'rgb({coords_color[0]}, {coords_color[1]}, {coords_color[2]})'
+        }
     )
     data = [coords_plot_data]
-    if edges is not None:
+    if show_edges:
         edges_sorted, _ = torch.sort(edges.permute([1, 0]), dim=1)
         unique_pairs = set([tuple(pair.tolist()) for pair in edges_sorted])
         edges_pruned = torch.tensor(list(unique_pairs))
@@ -48,20 +57,42 @@ def create_ploty_figure(
             y=y.squeeze(1).tolist(),
             z=z.squeeze(1).tolist(),
             mode='lines',
-            marker={'size': 4, 'opacity': transparency, 'color': edges_color}
+            line={
+                'width': edges_size,
+                'color': f'rgba({edges_color[0]}, {edges_color[1]}, {edges_color[2]}, {float(edges_color[3])/255.0})'
+            }
         )
         data = [coords_plot_data, edges_plot_data]
         
     if return_ploty_data:
         return data
     else:
-        layout = go.Layout(margin={'l': 0, 'r': 0, 'b': 0, 't': 0})
+        layout = go.Layout(
+            margin={'l': 0, 'r': 0, 'b': 0, 't': 35},
+            title=title
+        )
         return go.Figure(data=data, layout=layout)
 
-def plot_multiple_graphs(
-    graphs: List[Tuple],
-    # unique_colors: bool = True
+def create_ploty_figure_multiple(
+    graphs: List[Tuple[torch.Tensor, torch.Tensor]],
+    title: str = 'Plotly Graph',
+    coords_color: List[List[int]] = None,
+    coord_size: List[int] = None,
+    show_edges: bool = True,
+    edges_color: List[List[int]] = None,
+    edges_size: List[int] = None,
 ):
+    # * set defaults
+    n = len(graphs)
+    if coords_color is not None: assert len(coords_color) == n
+    else: coords_color = [rgba_colors_list[0]] * n
+    if coord_size is not None: assert len(coord_size) == n
+    else: coord_size = [2] * n
+    if edges_color is not None: assert len(edges_color) == n
+    else: edges_color = [rgba_colors_list[0]] * n
+    if edges_size is not None: assert len(edges_size) == n
+    else: edges_size = [2] * n
+    
     all_data = []
     for i, graph in enumerate(graphs):
         coords, edges = graph
@@ -69,25 +100,41 @@ def plot_multiple_graphs(
             coords, 
             edges, 
             return_ploty_data=True,
-            coords_color = colors_list[i],
-            edges_color = colors_list[i],
+            coords_color=coords_color[i],
+            coord_size=coord_size[i],
+            show_edges=show_edges,
+            edges_color=edges_color[i],
+            edges_size=edges_size[i],
         )
         all_data.append(coords_data)
         all_data.append(edges_data)
         
-    layout = go.Layout(margin={'l': 0, 'r': 0, 'b': 0, 't': 0})
+    layout = go.Layout(
+        margin={'l': 0, 'r': 0, 'b': 0, 't': 35},
+        title=title
+    )
     return go.Figure(data=all_data, layout=layout)
 
-# * view graph evolution
+
 def create_evolve_figure(
     model: torch.nn.Module,
     num_steps: int = 50,
     frame_duration: int = 100,
+    title: str = 'Plotly Graph',
+    target_coords_color: List[int] = rgba_colors_list[0],
+    target_coord_size: int = 2,
+    pred_coords_color: List[int] = rgba_colors_list[4],
+    pred_coord_size: int = 2,
     show_edges: bool = True,
-    title: str = 'GNCA Evolution',
-    coord_size: int = 4,
-    coord_opactity: float = 0.5
+    target_edges_color: List[int] = rgba_colors_list[0],
+    target_edges_size: int = 2,
+    pred_edges_color: List[int] = rgba_colors_list[4],
+    pred_edges_size: int = 2,
 ):
+    assert len(target_coords_color) == 4
+    assert len(pred_coords_color) == 4
+    assert len(target_edges_color) == 4
+    assert len(pred_edges_color) == 4
     model.eval()
     _, \
     edges, _, \
@@ -95,30 +142,32 @@ def create_evolve_figure(
     
     def create_coords_dict(
         coords: torch.Tensor,
-        name: str = 'coords',
-        size: int = 4,
-        color: str = colors_list[0],
-        opacity: float = 0.5,
+        name: str,
+        size: int,
+        color: List[int],
     ):
         x, y, z = np.split(coords.cpu().numpy(), 3, 1)
         coords_dict = {
+            'name': name,
             'type': 'scatter3d',
             'x': x.squeeze(1).tolist(),
             'y': y.squeeze(1).tolist(),
             'z': z.squeeze(1).tolist(),
             'mode': 'markers',
-            'marker': {'size': size, 'opacity': opacity, 'color': color},
-            'name': name
+            'marker': {
+                'size': size, 
+                'opacity': float(color[3])/255.0,
+                'color': f'rgb({color[0]}, {color[1]}, {color[2]})'
+            }
         }
         return coords_dict
     
     def create_edges_dict(
         edges: torch.Tensor,
         coords: torch.Tensor,
-        name: str = 'edges',
-        size: int = 4,
-        color: str = colors_list[0],
-        opacity: float = 0.5,
+        name: str,
+        size: int,
+        color: List[int],
     ):
         edges = edges.clone()
         edges_sorted, _ = torch.sort(edges.permute([1, 0]), dim=1)
@@ -133,13 +182,16 @@ def create_evolve_figure(
         edges_np = np.insert(edges_np, np.arange(2, edges_np.shape[0], 2), [None, None, None], axis=0)
         x, y, z = np.split(edges_np, 3, 1)
         edges_dict = {
+            'name': name,
             'type': 'scatter3d',
             'x': x.squeeze(1).tolist(),
             'y': y.squeeze(1).tolist(),
             'z': z.squeeze(1).tolist(),
             'mode': 'lines',
-            'marker': {'size': size, 'opacity': opacity, 'color': color},
-            'name': name
+            'line': {
+                'width': size, 
+                'color': f'rgba({color[0]}, {color[1]}, {color[2]}, {float(color[3])/255.0})'
+            }
         }
         return edges_dict
 
@@ -147,16 +199,16 @@ def create_evolve_figure(
     target_coords_dict = create_coords_dict(
         model.target_coords, 
         'target-coords',
-        size=coord_size,
-        opacity=coord_opactity
+        color=target_coords_color,
+        size=target_coord_size,
     )
     if show_edges:
         target_edges_dict = create_edges_dict(
             edges, 
             model.target_coords, 
-            'target-edges', 
-            size=coord_size,
-            opacity=coord_opactity
+            'target-edges',
+            color=target_edges_color,
+            size=target_edges_size,
         )
 
     # * create frames of predicted coords/edges
@@ -166,18 +218,16 @@ def create_evolve_figure(
         pred_coords_dict = create_coords_dict(
             coords, 
             'pred-coords', 
-            color=colors_list[4], 
-            size=coord_size,
-            opacity=coord_opactity
+            color=pred_coords_color, 
+            size=pred_coord_size,
         )
         if show_edges:
             pred_edges_dict = create_edges_dict(
                 edges, 
                 coords,
                 'pred-edges', 
-                color=colors_list[4], 
-                size=coord_size,
-                opacity=coord_opactity
+                color=pred_edges_color,
+                size=pred_edges_size,
             )
         
         # * make data list
