@@ -1,5 +1,5 @@
-import torch
 from typing import List, Optional
+import torch
 
 class egc(torch.nn.Module):
     
@@ -35,7 +35,7 @@ class egc(torch.nn.Module):
             act,
             torch.nn.Linear(message_dim, message_dim),
             act
-        )
+        ).to(device)
         last_coords_layer = torch.nn.Linear(message_dim, 1, bias=False)
         last_coords_layer.weight.data.zero_()
         self.coords_mlp = torch.nn.Sequential(
@@ -43,17 +43,17 @@ class egc(torch.nn.Module):
             act,
             last_coords_layer,
             torch.nn.Tanh() if has_attention else torch.nn.Identity()
-        )
+        ).to(device)
         self.hidden_mlp = torch.nn.Sequential(
             torch.nn.Linear(message_dim + hidden_dim, message_dim),
             act,
             torch.nn.Linear(message_dim, self.out_node_dim)
-        )
+        ).to(device)
         if has_attention:
             self.attention_mlp = torch.nn.Sequential(
                 torch.nn.Linear(message_dim, 1),
                 torch.nn.Sigmoid()
-            )
+            ).to(device)
   
     def get_coord_n2(
         self,
@@ -94,6 +94,8 @@ class egc(torch.nn.Module):
             edge_feat = torch.cat([hidden[edges[0]], hidden[edges[1]], coords_n2, edge_attr], dim=1).to(self.device)
         else:
             edge_feat = torch.cat([hidden[edges[0]], hidden[edges[1]], coords_n2], dim=1).to(self.device)
+            
+        # print (f'(run_message_mlp) edge_feat.shape: {edge_feat.shape}, edge_feat:\n{edge_feat}')
 
         # * run mlp
         out = self.message_mlp(edge_feat)
@@ -140,20 +142,24 @@ class egc(torch.nn.Module):
         verbose: Optional[bool] = False
     ):
         if verbose: print ('------------------------------')
-        if verbose: print (f'coords.shape: {coords.shape}')
-        if verbose: print (f'hidden.shape: {hidden.shape}')
-        if verbose: print (f'edges.shape: {edges.shape}')
+        if verbose: print (f'coords.shape: {coords.shape}, coords:\n{coords}')
+        if verbose: print (f'hidden.shape: {hidden.shape}, hidden:\n{hidden}')
+        if verbose: print (f'edges.shape: {edges.shape}, edges:\n{edges}')
         
         coords_diff, coords_n2 = self.get_coord_n2(coords, edges)
+        
+        if verbose: print (f'coords_diff.shape: {coords_diff.shape}, coords_diff:\n{coords_diff}')
+        if verbose: print (f'coords_n2.shape: {coords_n2.shape}, coords_n2:\n{coords_n2}')
+        
         edge_feat = self.run_message_mlp(hidden, coords_n2, edges, edge_weight, edge_attr)
+        
+        if verbose: print (f'edge_feat.shape: {edge_feat.shape}, edge_feat:\n{edge_feat}')
+        
         coords = self.run_coords_mlp(coords, coords_diff, edge_feat, edges)
         hidden = self.run_hidden_mlp(hidden, edge_feat, edges)
-        
-        if verbose: print (f'coords_diff.shape: {coords_diff.shape}')
-        if verbose: print (f'coords_n2.shape: {coords_n2.shape}')
-        if verbose: print (f'edge_feat.shape: {edge_feat.shape}')
-        if verbose: print (f'(returning) coords.shape: {coords.shape}')
-        if verbose: print (f'(returning) hidden.shape: {hidden.shape}')
+              
+        if verbose: print (f'(returning) coords.shape: {coords.shape}, coords:\n{coords}')
+        if verbose: print (f'(returning) hidden.shape: {hidden.shape}, hidden:\n{hidden}')
         
         return coords, hidden
 
@@ -175,6 +181,7 @@ class egnn(torch.nn.Module):
         edge_attr: Optional[torch.Tensor] = None,
         verbose: Optional[bool] = False,
     ):
+        edges = edges.long()
         out = None
         for layer in self.layers:
             out = layer(coords, hidden, edges, edge_weight, edge_attr, verbose)

@@ -40,6 +40,7 @@ class TrainPool:
         self.cache['coords'] = seed_coords.clone().repeat([self.pool_size, 1, 1])
         self.cache['hidden'] = seed_hidden.clone().repeat([self.pool_size, 1, 1])
         self.cache['steps'] = [0] * self.pool_size
+        self.cache['loss'] = torch.full((self.pool_size, ), torch.inf)
         
     def get_random_edges(self):
         perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
@@ -59,33 +60,29 @@ class TrainPool:
         
         # * get random edges
         rand_target_edges, rand_target_edges_lens = self.get_random_edges()
+        rand_edges = []
+        rand_edges_lens = []
+        for i in range(batch_size):
+            batch_edges = rand_target_edges.clone().add(i*self.num_nodes)
+            rand_edges.append(batch_edges)
+            rand_edges_lens.append(rand_target_edges_lens)
+        rand_edges = torch.cat(rand_edges, dim=1).to(self.device)
+        rand_edges_lens = torch.cat(rand_edges_lens, dim=0).to(self.device)
         
-        # * compute loss for each graph in batch
+        # * re-add seed into batch (highest loss)
         if replace_lowest_loss:
-            loss_per_graph = [0.0] * batch_size
-            for i in range(batch_size):
-                edge_lens = torch.norm(batch_coords[i, rand_target_edges[0]] - batch_coords[i, rand_target_edges[1]], dim=-1)
-                loss_per_edge = self.loss_func(edge_lens, rand_target_edges_lens)
-                loss_per_graph[i] = float(loss_per_edge.mean())
-            loss_per_graph = np.array(loss_per_graph)
-            loss_ranks = np.argsort(loss_per_graph)[::-1]
-            
-            # * re-order batch based on loss
-            batch_coords = batch_coords[loss_ranks.copy()]
-            batch_hidden = batch_hidden[loss_ranks.copy()]
-            batch_ids = batch_ids[loss_ranks.copy()]
-            
-            # # * re-add seed into batch (highest loss)
+            max_loss_id = self.cache['loss'][batch_ids].argmax().item()
             seed_coords, seed_hidden = self.seed
-            batch_coords[0] = seed_coords.clone().to(self.device)
-            batch_hidden[0] = seed_hidden.clone().to(self.device)
-            self.cache['steps'][batch_ids[0]] = 0
+            batch_coords[max_loss_id] = seed_coords.clone().to(self.device)
+            batch_hidden[max_loss_id] = seed_hidden.clone().to(self.device)
+            self.cache['steps'][max_loss_id] = 0
             
-            # * check for reset graphs (re-add seed)
-            for i, id in enumerate(batch_ids):
-                if self.cache['steps'][id] > self.reset_at:
-                    batch_coords[i] = seed_coords.clone().to(self.device)
-                    batch_hidden[i] = seed_hidden.clone().to(self.device)
+        # * check for reset graphs (re-add seed)
+        for i, id in enumerate(batch_ids):
+            if self.cache['steps'][id] > self.reset_at:
+                batch_coords[i] = seed_coords.clone().to(self.device)
+                batch_hidden[i] = seed_hidden.clone().to(self.device)
+                self.cache['steps'][id] = 0
                     
         # * squish batches into one dim
         # batch_coords_rs = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
@@ -97,7 +94,7 @@ class TrainPool:
         # assert torch.equal(batch_coords_rs, batch_coords)
         # assert torch.equal(batch_hidden_rs, batch_hidden)
         
-        return batch_ids, batch_coords, batch_hidden, rand_target_edges, rand_target_edges_lens
+        return batch_ids, batch_coords, batch_hidden, rand_edges, rand_edges_lens
     
     def update_pool(
         self,
@@ -105,6 +102,7 @@ class TrainPool:
         batch_ids: np.ndarray[int],
         batch_coords: torch.Tensor,
         batch_hidden: torch.Tensor,
+        batch_loss: torch.Tensor,
         steps: int,
     ):
         # * unsquish batches
@@ -114,6 +112,7 @@ class TrainPool:
         # * replace in pool cache
         self.cache['coords'][batch_ids] = batch_coords.detach().cpu()
         self.cache['hidden'][batch_ids] = batch_hidden.detach().cpu()
+        self.cache['loss'][batch_ids] = batch_loss.detach().cpu()
         
         # * update steps
         for i in batch_ids:

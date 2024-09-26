@@ -128,7 +128,8 @@ class FixedTargetEGNCA(torch.nn.Module):
         coords = self.pool.cache['coords'][index]
         edges = self.target_edges.clone()
         steps = self.pool.cache['steps'][index]
-        return index, coords, edges, steps
+        loss = self.pool.cache['loss'][index]
+        return index, coords, edges, steps, loss
         
     def run_for(
         self,
@@ -165,7 +166,7 @@ class FixedTargetEGNCA(torch.nn.Module):
         loss_log = []
         min_avg_loss = 1e100
         best_model_path = None
-        epochs = self.args.epochs+1
+        epochs = self.args.epochs
         
         # * create edges tensor
         num_nodes = self.target_coords.shape[0]
@@ -183,7 +184,7 @@ class FixedTargetEGNCA(torch.nn.Module):
             rand_target_edges_lens = self.pool.get_batch(self.args.batch_size)
                     
             # * run for n steps
-            n_steps = np.random.randint(self.args.min_steps, self.args.max_steps+1)
+            n_steps = np.random.randint(self.args.min_steps, self.args.max_steps)
             for _ in range(n_steps):
                 batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges.to(self.args.device), verbose=False)
             
@@ -195,15 +196,16 @@ class FixedTargetEGNCA(torch.nn.Module):
             
             # * backward pass
             with torch.no_grad():
-                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                self.optimizer.zero_grad()
                 self.lr_scheduler.step(loss)
                 self.pool.update_pool(
                     self.args.batch_size, 
                     batch_ids, 
                     batch_coords, 
                     batch_hidden,
+                    loss_per_graph,
                     n_steps,
                 )
                 
@@ -231,13 +233,12 @@ class FixedTargetEGNCA(torch.nn.Module):
                         from plotly.subplots import make_subplots
                         import plotly
                         
-                        # clear_output()
+                        clear_output()
                         trgt_coords = self.target_coords
-                        index, pred_coords, edges, steps = self.get_random_pool_graph()
+                        index, pred_coords, edges, steps, loss = self.get_random_pool_graph()
                         seed_coords, _ = self.pool.seed
                         seed_color = rgba_colors_list[4]
                         seed_color[3] = 0
-                        print ()
                         plotly.offline.init_notebook_mode()
                         fig1 = create_ploty_figure_multiple(
                             graphs=[(trgt_coords, edges),
@@ -263,7 +264,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                             vertical_spacing=0.02, 
                             specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
                             subplot_titles=[
-                                f'pool graph #{index}, steps: {steps}, loss: {_loss}',
+                                f'pool graph #{index}, steps: {steps}, loss: {loss}',
                                 f'run_for() graph, steps: {steps} loss: {r_loss}'
                             ])
                         for j in fig1.data :
@@ -287,6 +288,13 @@ class FixedTargetEGNCA(torch.nn.Module):
                         name=f'best-{i}',
                         verbose=False,
                     )
+                    
+        # * save final model
+        self.save(
+            path='/'.join([self.args.save_to, self.args.model_name]),
+            name=f'final-{i}',
+            verbose=False,
+        )
                     
 def test_model_training(
     num_tests: int = 10,
