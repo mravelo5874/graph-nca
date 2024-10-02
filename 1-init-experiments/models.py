@@ -159,7 +159,8 @@ class FixedTargetEGNCA(torch.nn.Module):
     
     def train_model(
         self,
-        verbose: bool=False,
+        log_verbose: bool=True,
+        train_verbose: bool=False,
         view_random_graphs: bool=False,
     ):
         train_start = datetime.datetime.now()
@@ -186,13 +187,22 @@ class FixedTargetEGNCA(torch.nn.Module):
             # * run for n steps
             n_steps = np.random.randint(self.args.min_steps, self.args.max_steps)
             for _ in range(n_steps):
-                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges.to(self.args.device), verbose=False)
+                batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges.to(self.args.device), verbose=train_verbose)
+                
+            print (f'rand_edges.shape: {rand_edges.shape}, rand_edges:\n{rand_edges}')
+            print (f'edges.shape: {edges.shape}, edges:\n{edges}')
+            # print (f'rand_target_edges_lens.shape: {rand_target_edges_lens.shape}, rand_target_edges_lens:\n{rand_target_edges_lens}')
             
             # * calculate loss
             edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
             loss_per_edge = self.mse(edge_lens, rand_target_edges_lens)
             loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
             loss = loss_per_graph.mean()
+            
+            # print (f'edge_lens.shape: {edge_lens.shape}, edge_lens:\n{edge_lens}')
+            # print (f'loss_per_edge.shape: {loss_per_edge.shape}, loss_per_edge:\n{loss_per_edge}')
+            # print (f'loss_per_graph.shape: {loss_per_graph.shape}, loss_per_graph:\n{loss_per_graph}')
+            # print (f'loss: {loss}')
             
             # * backward pass
             with torch.no_grad():
@@ -227,6 +237,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                     est = str(datetime.timedelta(seconds=est_time_sec))
                     lr = np.round(self.lr_scheduler.get_last_lr()[0], 8)
                     
+                    # * print out random pool graph comparision to run_for graph
                     if view_random_graphs:
                         from utils.visualize import create_ploty_figure_multiple, rgba_colors_list
                         from IPython.display import clear_output
@@ -266,15 +277,15 @@ class FixedTargetEGNCA(torch.nn.Module):
                             subplot_titles=[
                                 f'pool graph #{index}, steps: {steps}, loss: {loss}',
                                 f'run_for() graph, steps: {steps} loss: {r_loss}'
-                            ])
-                        for j in fig1.data :
+                        ])
+                        for j in fig1.data:
                             fig3.add_trace(j, row=1, col=1)
-                        for j in fig2.data :    
+                        for j in fig2.data:
                             fig3.add_trace(j, row=1, col=2)
                         plotly.offline.iplot(fig3)
                     
                     # * print out training stats
-                    if verbose: print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
+                    if log_verbose: print (f'[{i}/{epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {time}~{est}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
 
                 # * save if minimun average loss detected
                 if avg_loss < min_avg_loss and i > self.args.info_rate+1:
