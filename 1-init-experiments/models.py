@@ -1,4 +1,4 @@
-from data.generate import generate_line_graph, generate_square_plane_graph, generate_bunny_graph
+from data.generate import generate_line_graph, generate_square_plane_graph, retrieve_bunny_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
 from typing import Optional
@@ -35,7 +35,7 @@ class FixedTargetEGNCA(torch.nn.Module):
         elif args.graph == 'grid':
             target_coords, target_edges = generate_square_plane_graph(args.size)
         elif args.graph == 'bunny':
-            target_coords, target_edges = generate_bunny_graph()
+            target_coords, target_edges = retrieve_bunny_graph()
         else:
             print (f'[models.py] invalid graph: {args.graph}')
             return
@@ -312,8 +312,8 @@ def test_model_training(
     verbose: bool = False
 ):
     torch.set_default_dtype(torch.float32)
-    from data.generate import generate_bunny_graph
-    seed_coords, seed_edges = generate_bunny_graph()
+    from data.generate import retrieve_bunny_graph
+    seed_coords, seed_edges = retrieve_bunny_graph()
     
     for i in range(num_tests):
         

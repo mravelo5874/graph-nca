@@ -122,9 +122,9 @@ def test_pool_functionality(
     num_tests: int = 100,
     verbose: bool = False
 ):
-    from data.generate import generate_bunny_graph
+    from data.generate import retrieve_bunny_graph
     
-    seed_coords, _ = generate_bunny_graph()
+    seed_coords, _ = retrieve_bunny_graph()
     seed_hidden = torch.rand([seed_coords.shape[0], 16])
     
     for i in range(num_tests):

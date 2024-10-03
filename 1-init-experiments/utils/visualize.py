@@ -40,7 +40,7 @@ def create_ploty_figure(
         }
     )
     data = [coords_plot_data]
-    if show_edges:
+    if show_edges and edges is not None:
         edges_sorted, _ = torch.sort(edges.permute([1, 0]), dim=1)
         unique_pairs = set([tuple(pair.tolist()) for pair in edges_sorted])
         edges_pruned = torch.tensor(list(unique_pairs))
@@ -311,7 +311,7 @@ def create_evolve_figure(
             'xaxis': {'range': [-d, d], 'autorange': False},
             'yaxis': {'range': [-d, d], 'autorange': False},
             'zaxis': {'range': [-d, d], 'autorange': False},
-            'camera': dict(eye=dict(x=0.5, y=0.5, z=0.5))
+            'camera': dict(eye=dict(x=1, y=1, z=1))
         },
         'sliders': [sliders_dict],
         'updatemenus': [updatemenus_dict],
