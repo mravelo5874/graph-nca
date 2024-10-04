@@ -60,14 +60,15 @@ class TrainPool:
         
         # * get random edges
         rand_target_edges, rand_target_edges_lens = self.get_random_edges()
-        rand_edges = []
-        rand_edges_lens = []
-        for i in range(batch_size):
-            batch_edges = rand_target_edges.clone().add(i*self.num_nodes)
-            rand_edges.append(batch_edges)
-            rand_edges_lens.append(rand_target_edges_lens)
-        rand_edges = torch.cat(rand_edges, dim=1).to(self.device)
-        rand_edges_lens = torch.cat(rand_edges_lens, dim=0).to(self.device)
+        # rand_edges = []
+        # rand_edges_lens = []
+        # for i in range(batch_size):
+        #     batch_edges = rand_target_edges.clone().add(i*self.num_nodes)
+        #     rand_edges.append(batch_edges)
+        #     rand_edges_lens.append(rand_target_edges_lens)
+        
+        rand_edges = rand_target_edges.clone().to(self.device)
+        rand_edges_lens = rand_target_edges_lens.clone().to(self.device)
         
         # * re-add seed into batch (highest loss)
         if replace_lowest_loss:
@@ -88,8 +89,8 @@ class TrainPool:
         # batch_coords_rs = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])
         # batch_hidden_rs = batch_hidden.reshape([batch_size*batch_hidden.shape[1], batch_hidden.shape[2]])
         
-        batch_coords = batch_coords.view(-1, batch_coords.shape[2])
-        batch_hidden = batch_hidden.view(-1, batch_hidden.shape[2])
+        # batch_coords = batch_coords.view(-1, batch_coords.shape[2])
+        # batch_hidden = batch_hidden.view(-1, batch_hidden.shape[2])
         
         # assert torch.equal(batch_coords_rs, batch_coords)
         # assert torch.equal(batch_hidden_rs, batch_hidden)
@@ -106,8 +107,8 @@ class TrainPool:
         steps: int,
     ):
         # * unsquish batches
-        batch_coords = batch_coords.reshape([batch_size, batch_coords.shape[0]//batch_size, batch_coords.shape[1]])
-        batch_hidden = batch_hidden.reshape([batch_size, batch_hidden.shape[0]//batch_size, batch_hidden.shape[1]])
+        # batch_coords = batch_coords.reshape([batch_size, batch_coords.shape[0]//batch_size, batch_coords.shape[1]])
+        # batch_hidden = batch_hidden.reshape([batch_size, batch_hidden.shape[0]//batch_size, batch_hidden.shape[1]])
         
         # * replace in pool cache
         self.cache['coords'][batch_ids] = batch_coords.detach().cpu()

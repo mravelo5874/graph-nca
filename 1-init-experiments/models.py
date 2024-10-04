@@ -137,23 +137,23 @@ class FixedTargetEGNCA(torch.nn.Module):
         collect_all: bool = False
     ):
         seed_coords, seed_hidden = self.pool.seed
-        coords = seed_coords.clone().to(self.args.device)
-        hidden = seed_hidden.clone().to(self.args.device)
+        coords = seed_coords.clone().unsqueeze(0).to(self.args.device)
+        hidden = seed_hidden.clone().unsqueeze(0).to(self.args.device)
         edges = self.target_edges.to(self.args.device)
         
         coords_collection = []
-        if collect_all: coords_collection.append(coords)
+        if collect_all: coords_collection.append(coords.squeeze(0))
     
         with torch.no_grad():
             for _ in range(num_steps):
                 coords, hidden = self.forward(coords, hidden, edges, verbose=False)
-                if collect_all: coords_collection.append(coords)
+                if collect_all: coords_collection.append(coords.squeeze(0))
 
-            rand_target_edges, rand_target_edges_lens = self.pool.get_random_edges()
-            edge_lens = torch.norm(coords[rand_target_edges[0]] - coords[rand_target_edges[1]], dim=-1)
-            loss_per_edge = self.mse(edge_lens, rand_target_edges_lens)
-            loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
-            loss = loss_per_graph.mean()
+            rand_edges, rand_edges_lens = self.pool.get_random_edges()
+            coords = coords.squeeze(0)
+            b_rand_edge_lens = torch.norm(coords[rand_edges[0]] - coords[rand_edges[1]], dim=-1)
+            b_loss_per_edge = self.mse(b_rand_edge_lens, rand_edges_lens)
+            loss = b_loss_per_edge.mean()
         
         return coords, edges, loss.item(), coords_collection
     
@@ -170,34 +170,46 @@ class FixedTargetEGNCA(torch.nn.Module):
         epochs = self.args.epochs
         
         # * create edges tensor
-        num_nodes = self.target_coords.shape[0]
-        edges = []
-        for i in range(self.args.batch_size):
-            batch_edges = self.target_edges.clone().add(i*num_nodes)
-            edges.append(batch_edges)
-        edges = torch.cat(edges, dim=1).to(self.args.device)
+        # num_nodes = self.target_coords.shape[0]
+        # edges = []
+        # for i in range(self.args.batch_size):
+        #     batch_edges = self.target_edges.clone().add(i*num_nodes)
+        #     edges.append(batch_edges)
+        # edges = torch.cat(edges, dim=1).to(self.args.device)
+        
+        edges = self.target_edges.clone().to(self.args.device)
                     
         for i in range(epochs):
             batch_ids, \
             batch_coords, \
             batch_hidden, \
             rand_edges, \
-            rand_target_edges_lens = self.pool.get_batch(self.args.batch_size)
-                    
+            rand_edges_lens = self.pool.get_batch(self.args.batch_size)
+            
+            # print (f'rand_edges.shape: {rand_edges.shape}, rand_edges:\n{rand_edges}')
+            # print (f'rand_edges_lens.shape: {rand_edges_lens.shape}, rand_edges_lens:\n{rand_edges_lens}')
+                                
             # * run for n steps
             n_steps = np.random.randint(self.args.min_steps, self.args.max_steps)
             for _ in range(n_steps):
                 batch_coords, batch_hidden = self.forward(batch_coords, batch_hidden, edges.to(self.args.device), verbose=train_verbose)
-                
-            print (f'rand_edges.shape: {rand_edges.shape}, rand_edges:\n{rand_edges}')
-            print (f'edges.shape: {edges.shape}, edges:\n{edges}')
-            # print (f'rand_target_edges_lens.shape: {rand_target_edges_lens.shape}, rand_target_edges_lens:\n{rand_target_edges_lens}')
             
+            batch_losses = torch.zeros([self.args.batch_size]).to(self.args.device)
+            for b in range(self.args.batch_size):
+                b_coords = batch_coords[b]
+                b_rand_edge_lens = torch.norm(b_coords[rand_edges[0]] - b_coords[rand_edges[1]], dim=-1)
+                b_loss_per_edge = self.mse(b_rand_edge_lens, rand_edges_lens)
+                b_graph_loss = b_loss_per_edge.mean()
+                batch_losses[b] = b_graph_loss
+            # print (f'batch_losses: {batch_losses}')
+            loss = batch_losses.mean()
+            # print (f'epoch loss: {loss.item()}')
+                
             # * calculate loss
-            edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
-            loss_per_edge = self.mse(edge_lens, rand_target_edges_lens)
-            loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
-            loss = loss_per_graph.mean()
+            # edge_lens = torch.norm(batch_coords[rand_edges[0]] - batch_coords[rand_edges[1]], dim=-1)
+            # loss_per_edge = self.mse(edge_lens, rand_edges_lens)
+            # loss_per_graph = torch.stack([lpe.mean() for lpe in loss_per_edge.chunk(self.args.batch_size)])
+            # loss = loss_per_graph.mean()
             
             # print (f'edge_lens.shape: {edge_lens.shape}, edge_lens:\n{edge_lens}')
             # print (f'loss_per_edge.shape: {loss_per_edge.shape}, loss_per_edge:\n{loss_per_edge}')
@@ -215,7 +227,7 @@ class FixedTargetEGNCA(torch.nn.Module):
                     batch_ids, 
                     batch_coords, 
                     batch_hidden,
-                    loss_per_graph,
+                    batch_losses,
                     n_steps,
                 )
                 
