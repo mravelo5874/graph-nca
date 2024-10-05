@@ -186,8 +186,8 @@ class egc(torch.nn.Module):
         verbose: Optional[bool] = False
     ):
         if verbose: print ('------------------------------')
-        if verbose: print (f'coords.shape: {coords.shape}, coords:\n{coords}')
-        if verbose: print (f'hidden.shape: {hidden.shape}, hidden:\n{hidden}')
+        if verbose:print (f'coords.shape: {coords.shape}, coords:\n{coords}')
+        if verbose:print (f'hidden.shape: {hidden.shape}, hidden:\n{hidden}')
         if verbose: print (f'edges.shape: {edges.shape}, edges:\n{edges}')
         if verbose: print ('------------------------------')
         

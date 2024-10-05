@@ -34,18 +34,18 @@ class TrainPool:
         
     def reset(self):
         seed_coords, seed_hidden = self.seed
-        seed_coords = seed_coords.clone().to('cpu')
-        seed_hidden = seed_hidden.clone().to('cpu')
+        seed_coords = seed_coords.detach().clone().to('cpu')
+        seed_hidden = seed_hidden.detach().clone().to('cpu')
         self.cache = dict()
-        self.cache['coords'] = seed_coords.clone().repeat([self.pool_size, 1, 1])
-        self.cache['hidden'] = seed_hidden.clone().repeat([self.pool_size, 1, 1])
+        self.cache['coords'] = seed_coords.repeat([self.pool_size, 1, 1])
+        self.cache['hidden'] = seed_hidden.repeat([self.pool_size, 1, 1])
         self.cache['steps'] = [0] * self.pool_size
         self.cache['loss'] = torch.full((self.pool_size, ), torch.inf)
         
     def get_random_edges(self):
         perm = torch.randperm(self.all_edges.size(1))[:self.num_rand_edges]
-        rand_target_edges = self.all_edges[:, perm].clone().to(self.device)
-        rand_target_edges_lens = self.all_edge_lens[perm].clone().to(self.device)
+        rand_target_edges = self.all_edges[:, perm].detach().clone().to(self.device)
+        rand_target_edges_lens = self.all_edge_lens[perm].detach().clone().to(self.device)
         return rand_target_edges, rand_target_edges_lens
     
     def get_batch(
@@ -55,8 +55,8 @@ class TrainPool:
     ):
         # * extract batch from pool
         batch_ids = np.random.choice(self.pool_size, batch_size, replace=False)
-        batch_coords = self.cache['coords'][batch_ids].clone().to(self.device)
-        batch_hidden = self.cache['hidden'][batch_ids].clone().to(self.device)
+        batch_coords = self.cache['coords'][batch_ids].detach().clone().to(self.device)
+        batch_hidden = self.cache['hidden'][batch_ids].detach().clone().to(self.device)
         
         # * get random edges
         rand_target_edges, rand_target_edges_lens = self.get_random_edges()
@@ -74,16 +74,18 @@ class TrainPool:
         if replace_lowest_loss:
             max_loss_id = self.cache['loss'][batch_ids].argmax().item()
             seed_coords, seed_hidden = self.seed
-            batch_coords[max_loss_id] = seed_coords.clone().to(self.device)
-            batch_hidden[max_loss_id] = seed_hidden.clone().to(self.device)
+            batch_coords[max_loss_id] = seed_coords.detach().clone().to(self.device)
+            batch_hidden[max_loss_id] = seed_hidden.detach().clone().to(self.device)
             self.cache['steps'][max_loss_id] = 0
+            self.cache['loss'][max_loss_id] = 0
             
         # * check for reset graphs (re-add seed)
         for i, id in enumerate(batch_ids):
             if self.cache['steps'][id] > self.reset_at:
-                batch_coords[i] = seed_coords.clone().to(self.device)
-                batch_hidden[i] = seed_hidden.clone().to(self.device)
+                batch_coords[i] = seed_coords.detach().clone().to(self.device)
+                batch_hidden[i] = seed_hidden.detach().clone().to(self.device)
                 self.cache['steps'][id] = 0
+                self.cache['loss'][id] = 0
                     
         # * squish batches into one dim
         # batch_coords_rs = batch_coords.reshape([batch_size*batch_coords.shape[1], batch_coords.shape[2]])

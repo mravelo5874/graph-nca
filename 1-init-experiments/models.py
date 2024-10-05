@@ -1,4 +1,8 @@
-from data.generate import generate_line_graph, generate_square_plane_graph, retrieve_bunny_graph
+from data.generate import \
+    generate_line_graph, \
+    generate_square_plane_graph, \
+    retrieve_bunny_graph, \
+    generate_cube_graph
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
 from typing import Optional
@@ -34,6 +38,8 @@ class FixedTargetEGNCA(torch.nn.Module):
             target_coords, target_edges = generate_line_graph(args.size)
         elif args.graph == 'grid':
             target_coords, target_edges = generate_square_plane_graph(args.size)
+        elif args.graph == 'cube':
+            target_coords, target_edges = generate_cube_graph(args.size)
         elif args.graph == 'bunny':
             target_coords, target_edges = retrieve_bunny_graph()
         else:
@@ -137,23 +143,26 @@ class FixedTargetEGNCA(torch.nn.Module):
         collect_all: bool = False
     ):
         seed_coords, seed_hidden = self.pool.seed
-        coords = seed_coords.clone().unsqueeze(0).to(self.args.device)
-        hidden = seed_hidden.clone().unsqueeze(0).to(self.args.device)
+        coords = seed_coords.detach().clone().unsqueeze(0).to(self.args.device)
+        hidden = seed_hidden.detach().clone().unsqueeze(0).to(self.args.device)
         edges = self.target_edges.to(self.args.device)
         
         coords_collection = []
-        if collect_all: coords_collection.append(coords.squeeze(0))
-    
-        with torch.no_grad():
-            for _ in range(num_steps):
-                coords, hidden = self.forward(coords, hidden, edges, verbose=False)
-                if collect_all: coords_collection.append(coords.squeeze(0))
+        if collect_all:
+            coords_copy = coords.detach().clone()
+            coords_collection.append(coords_copy)
+        
+        for _ in range(num_steps+1):
+            coords, hidden = self.forward(coords, hidden, edges, verbose=False)
+            if collect_all: 
+                coords_copy = coords.detach().clone()
+                coords_collection.append(coords_copy.squeeze(0))
 
-            rand_edges, rand_edges_lens = self.pool.get_random_edges()
-            coords = coords.squeeze(0)
-            b_rand_edge_lens = torch.norm(coords[rand_edges[0]] - coords[rand_edges[1]], dim=-1)
-            b_loss_per_edge = self.mse(b_rand_edge_lens, rand_edges_lens)
-            loss = b_loss_per_edge.mean()
+        rand_edges, rand_edges_lens = self.pool.get_random_edges()
+        coords = coords.squeeze(0)
+        b_rand_edge_lens = torch.norm(coords[rand_edges[0]] - coords[rand_edges[1]], dim=-1)
+        b_loss_per_edge = self.mse(b_rand_edge_lens, rand_edges_lens)
+        loss = b_loss_per_edge.mean()
         
         return coords, edges, loss.item(), coords_collection
     
