@@ -1,5 +1,6 @@
 from torch_geometric.nn import PairNorm
 from argparse import Namespace
+from egnn import egnn, egc
 import torch
 import json
 
@@ -12,6 +13,7 @@ class fixed_target_egnca(torch.nn.Module):
         super(fixed_target_egnca, self).__init__()
         self.args = args
         self.pairnorm = PairNorm(scale=1.0)
+        self.egnn = egnn([egc(args)]).to(args.device)
         
     def save(
         self,

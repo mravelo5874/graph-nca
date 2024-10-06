@@ -39,6 +39,20 @@ def default_namespace():
     args.save_to = 'logs'
     return args
 
+def print_batch_dict(
+    batch_dict: dict
+):
+    ids = batch_dict['ids']
+    coords = batch_dict['coords']
+    hidden = batch_dict['hidden']
+    comp_edges = batch_dict['comp_edges']
+    comp_lens = batch_dict['comp_lens']
+    print (f'ids.shape: {ids.shape}')
+    print (f'coords.shape: {coords.shape}')
+    print (f'hidden.shape: {hidden.shape}')
+    print (f'comp_edges.shape: {comp_edges.shape}')
+    print (f'comp_lens.shape: {comp_lens.shape}')
+    
 import torch
 def expand_edge_tensor(
     edges: torch.LongTensor,
@@ -46,11 +60,11 @@ def expand_edge_tensor(
     size: int, # generally, this is the batch_size
 ) -> torch.Tensor:
     
-    edges = []
+    edges_list = []
     for i in range(size):
-        batch_edges = torch.tensor(edges).add(i*n_nodes)
-        edges.append(batch_edges)
-    edges = torch.cat(edges, dim=1).long()
+        batch_edges = edges.detach().clone().add(i*n_nodes)
+        edges_list.append(batch_edges)
+    edges = torch.cat(edges_list, dim=1).long()
     return edges
     
 from graph import graph

@@ -1,6 +1,6 @@
 from argparse import Namespace
 from pool import train_pool
-from utils import create_graph, expand_edge_tensor
+from utils import create_graph, expand_edge_tensor, print_batch_dict
 from graph import graph
 import numpy as np
 import datetime
@@ -54,7 +54,7 @@ class fixed_target_trainer():
             weight_decay=self.args.wd
         )
         lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=self.optimizer,
+            optimizer=optimizer,
             factor=self.args.factor_sch,
             patience=self.args.patience_sch,
             min_lr=self.args.end_lr,
@@ -73,8 +73,10 @@ class fixed_target_trainer():
             
             # gather batch data
             batch_data = pool.get_batch(self.args.batch_size)
-            batch_coords = torch.tensor(batch_data['coords']).to(self.args.device)
-            batch_hidden = torch.tensor(batch_data['hidden']).to(self.args.device)
+            # print ('(dev) batch data:')
+            # print_batch_dict(batch_data)
+            batch_coords = batch_data['coords'].to(self.args.device)
+            batch_hidden = batch_data['hidden'].to(self.args.device)
             
             # run graphs for n steps
             n = np.random.randint(self.args.min_steps, self.args.max_steps)
@@ -82,9 +84,8 @@ class fixed_target_trainer():
                 batch_coords, batch_hidden = self.model(batch_coords, batch_hidden, expanded_edges)
                 
             # configure comparison edges / lengths
-            comp_lens = batch_data['comp-lens']
-            comp_lens = torch.tensor([comp_lens]*self.args.batch_size).to(self.args.device)
-            comp_edges = batch_data['comp-edges']
+            comp_lens = batch_data['comp_lens'].repeat([self.args.batch_size]).to(self.args.device)            
+            comp_edges = batch_data['comp_edges']
             comp_edges = expand_edge_tensor(
                 comp_edges, 
                 self.n_nodes, 
@@ -110,7 +111,7 @@ class fixed_target_trainer():
             data['ids'] = batch_data['ids']
             data['coords'] = batch_coords
             data['hidden'] = batch_hidden
-            self.pool.update(batch_data, n, loss_per_graph.cpu().numpy())
+            pool.update(batch_data, n, loss_per_graph.detach().cpu().numpy())
                 
             # log info
             if epoch % self.args.log_rate == 0 and epoch != 0:

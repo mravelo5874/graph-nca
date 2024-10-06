@@ -70,6 +70,10 @@ class train_pool:
         if apply_damage:
             pass
         
+        # flatten out coordinate / hidden batches
+        batch_coords = batch_coords.reshape(batch_size * batch_coords.shape[1], 3)
+        batch_hidden = batch_hidden.reshape(batch_size * batch_hidden.shape[1], batch_hidden.shape[2])
+        
         # return batch-data object
         data = dict()
         data['ids'] = batch_ids
@@ -85,10 +89,17 @@ class train_pool:
         steps: int,
         losses: np.ndarray[float]
     ):
+        # reshape coordinate / hidden batches
+        batch_size = len(data['ids'])
+        batch_coords = data['coords'].clone().detach().cpu()
+        batch_hidden = data['hidden'].clone().detach().cpu()
+        batch_coords = batch_coords.reshape(batch_size, batch_coords.shape[0]//batch_size, 3)
+        batch_hidden = batch_hidden.reshape(batch_size, batch_hidden.shape[0]//batch_size, batch_hidden.shape[1])
+        
         # update cache values
         ids = data['ids']
-        self.cache['coords'][ids] = data['coords'].clone().detach().cpu()
-        self.cache['hidden'][ids] = data['hidden'].clone().detach().cpu()
+        self.cache['coords'][ids] = batch_coords
+        self.cache['hidden'][ids] = batch_hidden
         self.cache['steps'] = np.array([steps]*len(ids), dtype=np.int16)
         self.cache['loss'][ids] = np.array(losses, dtype=np.float16)
         
