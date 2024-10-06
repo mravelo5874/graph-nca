@@ -1,6 +1,7 @@
 from utils import furthest_point_dist
 from typing import List, Tuple
 import plotly.graph_objs as go
+from trainer import trainer
 import numpy as np
 import torch
 
@@ -118,28 +119,26 @@ def create_ploty_figure_multiple(
 
 
 def create_evolve_figure(
-    model: torch.nn.Module,
+    trainer: trainer,
     num_steps: int = 50,
     frame_duration: int = 100,
     title: str = 'Plotly Graph',
     target_coords_color: List[int] = rgba_colors_list[0],
     target_coord_size: int = 2,
-    pred_coords_color: List[int] = rgba_colors_list[4],
+    pred_coords_color: List[int] = rgba_colors_list[1],
     pred_coord_size: int = 2,
     show_edges: bool = True,
     target_edges_color: List[int] = rgba_colors_list[0],
     target_edges_size: int = 2,
-    pred_edges_color: List[int] = rgba_colors_list[4],
+    pred_edges_color: List[int] = rgba_colors_list[1],
     pred_edges_size: int = 2,
 ):
     assert len(target_coords_color) == 4
     assert len(pred_coords_color) == 4
     assert len(target_edges_color) == 4
     assert len(pred_edges_color) == 4
-    model.eval()
-    _, \
-    edges, _, \
-    collection = model.run_for(num_steps, collect_all=True)
+    data = trainer.runfor(num_steps, collect_graphs=True)
+    collection = data['collection']
     
     def create_coords_dict(
         coords: torch.Tensor,
@@ -197,8 +196,9 @@ def create_evolve_figure(
         return edges_dict
 
     # * create target coords/edges dictionaries
+    target_coords, edges, _ = trainer.target_graph.get()
     target_coords_dict = create_coords_dict(
-        model.target_coords, 
+        target_coords, 
         'target-coords',
         color=target_coords_color,
         size=target_coord_size,
@@ -206,7 +206,7 @@ def create_evolve_figure(
     if show_edges:
         target_edges_dict = create_edges_dict(
             edges, 
-            model.target_coords, 
+            target_coords, 
             'target-edges',
             color=target_edges_color,
             size=target_edges_size,
@@ -303,8 +303,8 @@ def create_evolve_figure(
         'showactive': False,
     }
 
-    seed, _ = model.pool.seed
-    _, d = furthest_point_dist(seed.cpu().numpy())
+    seed_coords, _, _ = trainer.seed_graph.get()
+    _, d = furthest_point_dist(seed_coords.cpu().numpy())
     layout = {
         'title': title,
         'scene': {

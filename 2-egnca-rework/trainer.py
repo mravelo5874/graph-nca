@@ -17,7 +17,7 @@ class trainer():
         self.args = args
         self.model = model
         self.target_graph = create_graph(args.graph, args.size, args.length)
-        target_coords, _ = self.target_graph.get()
+        target_coords, _, _ = self.target_graph.get()
         self.n_nodes = target_coords.shape[0]
     
     def runfor(self):
@@ -36,6 +36,41 @@ class fixed_target_trainer(trainer):
     ):
         super(fixed_target_trainer, self).__init__(args, model)
         
+        # check if seed data file already exists (loading trained model)
+        path = f'{self.args.save_to}/{self.args.file_name}'
+        if os.path.exists(f'{path}/seed.pkl'):
+            with open(f'{path}/seed.pkl', 'rb') as file:
+                reload_seed = pickle.load(file)
+                self.seed_graph = reload_seed
+            print (f'[trainer.py] loading seed data from file: {path}/seed.pkl')
+        
+        # generate new seed graph and save to file
+        else:
+            # create seed hidden state
+            seed_hidden = torch.ones([self.n_nodes, args.hidden_dim])
+            if args.init_hidden == 'rand':
+                seed_hidden = torch.rand([self.n_nodes, args.hidden_dim])
+        
+            seed_coords = torch.empty([self.n_nodes, 3]).normal_(std=self.args.seed_std)
+            _, target_edges, _ = self.target_graph.get()
+            self.seed_graph = graph(seed_coords, target_edges, seed_hidden)
+            
+            # save seed data to file
+            if not os.path.exists(path):
+                os.makedirs(path)
+            with open(f'{path}/seed.pkl', 'wb') as file:
+                pickle.dump(self.seed_graph, file)
+                
+            # reload seed sanity check
+            with open(f'{path}/seed.pkl', 'rb') as file:
+                reload_seed = pickle.load(file)
+            seed_coords, seed_edges, seed_hidden = self.seed_graph.get()
+            reload_coords, reload_edges, reload_hidden = reload_seed.get()
+            assert torch.equal(seed_coords, reload_coords)
+            assert torch.equal(seed_edges, reload_edges)
+            assert torch.equal(seed_hidden, reload_hidden)
+            print (f'[trainer.py] generated new seed and saved to file: {path}/seed.pkl')
+        
     def runfor(
         self,
         n_steps: int,
@@ -44,16 +79,12 @@ class fixed_target_trainer(trainer):
         assert hasattr(self, 'target_graph')
         assert hasattr(self, 'seed_graph')
         assert hasattr(self, 'model')
-        assert hasattr(self, 'pool')
 
-        seed_coords, edges = self.seed_graph.get()
+        seed_coords, edges, seed_hidden = self.seed_graph.get()
         coords = seed_coords.detach().clone().to(self.args.device)
-        hidden = self.pool.seed_hidden.clone().detach().to(self.args.device)
+        hidden = seed_hidden.clone().detach().to(self.args.device)
         coords_collection = []
         if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
-        
-        print (f'(dev) coords.shape: {coords.shape}')
-        print (f'(dev) hidden.shape: {hidden.shape}')
         
         with torch.no_grad():
             for _ in range(n_steps):
@@ -61,7 +92,8 @@ class fixed_target_trainer(trainer):
                 if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
         
         mse = torch.nn.MSELoss(reduction='none')
-        comp_edges, comp_lens = self.pool.get_comp_edges(self.args.comp_edge_percent)
+        temp_pool = train_pool(self.args, self.seed_graph, self.target_graph)
+        comp_edges, comp_lens = temp_pool.get_comp_edges(self.args.comp_edge_percent)
         pred_edge_len = torch.norm(coords[comp_edges[0]] - coords[comp_edges[1]], dim=-1)
         loss_per_edge = mse(pred_edge_len, comp_lens)
         loss = loss_per_edge.mean().item()
@@ -78,27 +110,6 @@ class fixed_target_trainer(trainer):
         vebose=False,
         compare_graphs=False,
     ):
-        
-        # generate seed graph
-        _, target_edges = self.target_graph.get()
-        seed_coords = torch.empty([self.n_nodes, 3]).normal_(std=self.args.seed_std)
-        self.seed_graph = graph(seed_coords, target_edges)
-        
-        # save seed data to file
-        path = f'{self.args.save_to}/{self.args.file_name}'
-        if not os.path.exists(path):
-            os.makedirs(path)
-        with open(f'{path}/seed.pkl', 'wb') as file:
-            pickle.dump(self.seed_graph, file)
-            
-        # reload seed sanity check
-        with open(f'{path}/seed.pkl', 'rb') as file:
-            reload_seed = pickle.load(file)
-        seed_coords, seed_edges = self.seed_graph.get()
-        reload_coords, reload_edges = reload_seed.get()
-        assert torch.equal(seed_coords, reload_coords)
-        assert torch.equal(seed_edges, reload_edges)
-        
         # create training objects
         self.pool = train_pool(self.args, self.seed_graph, self.target_graph)
         mse = torch.nn.MSELoss(reduction='none')
@@ -116,6 +127,7 @@ class fixed_target_trainer(trainer):
         )
         
         # expand target edges tensor
+        _, target_edges, _ = self.target_graph.get()
         expanded_edges = expand_edge_tensor(
             target_edges,
             self.n_nodes, 
@@ -179,7 +191,7 @@ class fixed_target_trainer(trainer):
             data['ids'] = batch_data['ids']
             data['coords'] = batch_coords
             data['hidden'] = batch_hidden
-            self.pool.update(batch_data, n, loss_per_graph.detach().cpu().numpy())
+            self.pool.update(data, n, loss_per_graph.detach().cpu().numpy())
                 
             # collect log info
             if epoch % self.args.log_rate == 0 and epoch != 0:

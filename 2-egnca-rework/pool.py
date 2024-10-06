@@ -13,14 +13,8 @@ class train_pool:
     ):
         self.args = args
         self.seed_graph = seed_graph
-        seed_coords, _ = seed_graph.get()
+        seed_coords, _, seed_hidden = seed_graph.get()
         self.n_nodes = seed_coords.shape[0]
-        
-        # create seed hidden state
-        self.seed_hidden = torch.ones([seed_coords.shape[0], args.hidden_dim])
-        if args.init_hidden == 'rand':
-            self.seed_hidden = torch.rand([seed_coords.shape[0], args.hidden_dim])
-        seed_hidden = self.seed_hidden.clone().detach().cpu()
         
         # create cache
         self.cache = dict()
@@ -32,15 +26,17 @@ class train_pool:
         # generate all-edges (V x V) matrix
         self.all_edges = torch.ones(self.n_nodes, self.n_nodes).tril(-1).nonzero().T
         row, col = self.all_edges[0], self.all_edges[1]
-        target_coords, _ = target_graph.get()
+        target_coords, _, _ = target_graph.get()
         self.all_edges_lens = torch.norm(target_coords[row] - target_coords[col], dim=-1)
     
     def get_random_graph(self):
         id = np.random.randint(self.args.pool_size)
         data = dict()
         data['id'] = id
-        data['coords'] = self.cache['coords'][id].clone().detach()
-        data['hidden'] = self.cache['hidden'][id].clone().detach()
+        coords = self.cache['coords'][id].clone().detach().cpu()
+        hidden = self.cache['hidden'][id].clone().detach().cpu()
+        data['coords'] = coords.squeeze(0)
+        data['hidden'] = hidden.squeeze(0)
         data['steps'] = self.cache['steps'][id]
         data['loss'] = self.cache['loss'][id]
         return data
@@ -68,8 +64,7 @@ class train_pool:
         
         # replace highest loss graph with seed graph
         if replace_max_loss:
-            seed_coords, _ = self.seed_graph.get()
-            seed_hidden = self.seed_hidden.clone().detach().to(self.args.device)
+            seed_coords, _, seed_hidden = self.seed_graph.get()
             max_loss_id = self.cache['loss'][batch_ids].argmax().item()
             batch_coords[max_loss_id] = seed_coords.to(self.args.device)
             batch_hidden[max_loss_id] = seed_hidden.to(self.args.device)
@@ -110,7 +105,7 @@ class train_pool:
         ids = data['ids']
         self.cache['coords'][ids] = batch_coords
         self.cache['hidden'][ids] = batch_hidden
-        self.cache['steps'][ids] = np.array([steps]*len(ids), dtype=np.int16)
+        self.cache['steps'][ids] += np.array([steps]*len(ids), dtype=np.int16)
         self.cache['loss'][ids] = np.array(losses, dtype=np.float16)
         
         

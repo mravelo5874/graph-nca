@@ -1,3 +1,4 @@
+from argparse import Namespace
 from data.generate import \
     generate_line_graph, \
     generate_square_plane_graph, \
@@ -5,14 +6,10 @@ from data.generate import \
     generate_cube_graph
 from graph import graph
 import numpy as np
+import datetime
 import torch
 
 def default_namespace():
-    import datetime
-    now = datetime.datetime.now()
-    date_time = now.strftime('%Y-%m-%d@%H-%M-%S')
-
-    from argparse import Namespace
     args = Namespace()
     
     # model parameters
@@ -36,6 +33,7 @@ def default_namespace():
     args.max_steps = 25
     args.log_rate = 100
     args.comp_edge_percent = 0.5 # random percent of ALL potential edges to use for loss calculations
+    args.save_to = 'logs'
     
     # graph parameters
     args.graph = 'line'
@@ -44,9 +42,14 @@ def default_namespace():
     args.seed_std = 0.5
     args.init_hidden = 'ones' # 'rand'
     
-    # file 
+    # update file name and return
+    args = update_namespace(args)
+    return args
+
+def update_namespace(args: Namespace):
+    now = datetime.datetime.now()
+    date_time = now.strftime('%Y-%m-%d@%H-%M-%S')
     args.file_name = f'{args.graph}{args.size}-{date_time}'
-    args.save_to = 'logs'
     return args
 
 def print_batch_dict(
@@ -122,22 +125,18 @@ def compare_pool_vs_runfor_graphs(
     import plotly
     
     clear_output()
-    trgt_coords, edges = trainer.target_graph.get()
+    trgt_coords, edges, _ = trainer.target_graph.get()
     graph_data = trainer.pool.get_random_graph()
     index = graph_data['id']
     pred_coords = graph_data['coords']
+    assert not torch.equal(pred_coords, trgt_coords)
     steps = graph_data['steps']
     loss = graph_data['loss']
-    seed_coords, _ = trainer.pool.seed_graph.get()
-    seed_color = rgba_colors_list[4]
-    seed_color[3] = 0
-    plotly.offline.init_notebook_mode()
     fig1 = create_ploty_figure_multiple(
         graphs=[(trgt_coords, edges),
-                (pred_coords, edges),
-                (seed_coords, edges)],
-        coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
-        edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
+                (pred_coords, edges)],
+        coords_color=[rgba_colors_list[0], rgba_colors_list[1]],
+        edges_color=[rgba_colors_list[0], rgba_colors_list[1]]
     )
 
     # * show "runfor" graph
@@ -145,10 +144,9 @@ def compare_pool_vs_runfor_graphs(
     runfor_coords = runfor_data['coords']
     fig2 = create_ploty_figure_multiple(
         graphs=[(trgt_coords, edges),
-                (runfor_coords, edges),
-                (seed_coords, edges)],
-        coords_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color],
-        edges_color=[rgba_colors_list[0], rgba_colors_list[1], seed_color]
+                (runfor_coords, edges)],
+        coords_color=[rgba_colors_list[0], rgba_colors_list[1]],
+        edges_color=[rgba_colors_list[0], rgba_colors_list[1]]
     )
     
     # * combine figures into one
@@ -159,10 +157,9 @@ def compare_pool_vs_runfor_graphs(
         specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
         subplot_titles=[
             f'pool graph #{index}, steps: {steps}, loss: {loss}',
-            f'run_for() graph, steps: {steps} loss: {runfor_loss}'
+            f'runfor graph, steps: {steps} loss: {runfor_loss}'
     ])
-    for j in fig1.data:
-        fig3.add_trace(j, row=1, col=1)
-    for j in fig2.data:
-        fig3.add_trace(j, row=1, col=2)
+    for i in fig1.data: fig3.add_trace(i, row=1, col=1)
+    for i in fig2.data: fig3.add_trace(i, row=1, col=2)
+    plotly.offline.init_notebook_mode()
     plotly.offline.iplot(fig3)
