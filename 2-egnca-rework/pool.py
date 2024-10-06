@@ -34,7 +34,17 @@ class train_pool:
         row, col = self.all_edges[0], self.all_edges[1]
         target_coords, _ = target_graph.get()
         self.all_edges_lens = torch.norm(target_coords[row] - target_coords[col], dim=-1)
-        
+    
+    def get_random_graph(self):
+        id = np.random.randint(self.args.pool_size)
+        data = dict()
+        data['id'] = id
+        data['coords'] = self.cache['coords'][id].clone().detach()
+        data['hidden'] = self.cache['hidden'][id].clone().detach()
+        data['steps'] = self.cache['steps'][id]
+        data['loss'] = self.cache['loss'][id]
+        return data
+
     def get_comp_edges(self, percent: float):
         n_comp_edges = int(percent * self.all_edges.shape[1])
         perm = torch.randperm(self.all_edges.size(1))[:n_comp_edges]
@@ -100,7 +110,7 @@ class train_pool:
         ids = data['ids']
         self.cache['coords'][ids] = batch_coords
         self.cache['hidden'][ids] = batch_hidden
-        self.cache['steps'] = np.array([steps]*len(ids), dtype=np.int16)
+        self.cache['steps'][ids] = np.array([steps]*len(ids), dtype=np.int16)
         self.cache['loss'][ids] = np.array(losses, dtype=np.float16)
         
         
