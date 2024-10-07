@@ -54,13 +54,14 @@ class egc(torch.nn.Module):
         # calculate coordinate differences and L2-norms
         coords_dif = coords[edges[0]] - coords[edges[1]]
         coords_l2 = torch.linalg.norm(coords_dif, dim=1, ord=2).unsqueeze(0).to(self.args.device)
+        coords_l2 = coords_l2.reshape([coords_l2.shape[1], coords_l2.shape[0]])
         
         # calulate hidden for all edge node pairs
-        h_i = hidden[edges[0]].permute([1, 0])
-        h_j = hidden[edges[1]].permute([1, 0])
+        h_i = hidden[edges[0]]
+        h_j = hidden[edges[1]]
         
         # run message mlp
-        message_mlp_input = torch.cat([coords_l2, h_i, h_j]).permute([1, 0]).to(self.args.device)
+        message_mlp_input = torch.cat([coords_l2, h_i, h_j], dim=1).to(self.args.device)
         m_ij = self.message_mlp(message_mlp_input)
         
         # run coordinate mlp
@@ -83,10 +84,16 @@ class egc(torch.nn.Module):
         
         # run hidden mlp
         m_ij_matrix = torch.zeros([n_nodes, n_nodes, self.args.message_dim]).to(self.args.device)
+        print (f'(dev) m_ij_matrix.shape: {m_ij_matrix.shape}')
+        print (f'(dev) m_ij.shape: {m_ij.shape}')
         m_ij_matrix[edges[0], edges[1]] = m_ij
         m_i = torch.sum(m_ij_matrix, dim=0)
+        print (f'(dev) m_i.shape: {m_i.shape}')
         hidden_mlp_input = torch.cat([hidden, m_i], dim=1)
+        print (f'(dev) hidden_mlp_input.shape: {hidden_mlp_input.shape}')
         h_i = self.hidden_mlp(hidden_mlp_input)
+        print (f'(dev) h_i.shape: {h_i.shape}')
+        print (f'(dev) hidden.shape: {hidden.shape}')
         hidden_out = hidden + h_i
         
         return coords_out, hidden_out

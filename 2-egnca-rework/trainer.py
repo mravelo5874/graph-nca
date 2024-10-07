@@ -147,10 +147,33 @@ class fixed_target_trainer(trainer):
             batch_coords = batch_data['coords'].to(self.args.device)
             batch_hidden = batch_data['hidden'].to(self.args.device)
             
+            # (dev) test single graph vs whole batch training
+            graph_0_coords = batch_coords[0:self.n_nodes,].detach().clone().to(self.args.device)
+            graph_0_hidden = batch_hidden[0:self.n_nodes,].detach().clone().to(self.args.device)
+            _, graph_0_edges, _ = self.target_graph.get()
+            
             # run graphs for n steps
             n = np.random.randint(self.args.min_steps, self.args.max_steps)
             for _ in range(n):
                 batch_coords, batch_hidden = self.model(batch_coords, batch_hidden, expanded_edges)
+                graph_0_coords, graph_0_hidden = self.model(graph_0_coords, graph_0_hidden, graph_0_edges)
+                
+                # c = batch_coords[0:self.n_nodes,]
+                # print (f'(dev) batch_coords[0:self.n_nodes,]:\n{c}')
+                # print (f'(dev) graph_0_coords:\n{graph_0_coords}')
+                # e = torch.allclose(c, graph_0_coords)
+                # print (f'(dev) torch.allclose(...):\n{e}')
+                
+                b = batch_hidden[0:self.n_nodes,]
+                print (f'(dev) batch_hidden[0:self.n_nodes,]:\n{b}')
+                print (f'(dev) graph_0_hidden:\n{graph_0_hidden}')
+                e = torch.allclose(b, graph_0_hidden)
+                print (f'(dev) torch.allclose(...):\n{e}')
+                diff = b - graph_0_hidden
+                print (f'(dev) diff:\n{diff}')
+                
+                assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)
+                assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden, atol=0.1, rtol=0.1)
                 
             # configure comparison edges / lengths
             comp_lens = batch_data['comp_lens'].repeat([self.args.batch_size]).to(self.args.device)            
@@ -212,7 +235,7 @@ class fixed_target_trainer(trainer):
                 print (f'[{epoch}/{self.args.epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {elapsed_time}~{est_rem_time}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')
             
             # save model if minimun average loss detected
-            if avg_loss < min_avg_loss and epoch > 0:
+            if avg_loss < min_avg_loss and epoch >= self.args.log_rate:
                 min_avg_loss = avg_loss
                 if best_model_path is not None:
                     os.remove(best_model_path)

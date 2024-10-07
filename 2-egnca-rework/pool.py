@@ -66,8 +66,8 @@ class train_pool:
         if replace_max_loss:
             seed_coords, _, seed_hidden = self.seed_graph.get()
             max_loss_id = self.cache['loss'][batch_ids].argmax().item()
-            batch_coords[max_loss_id] = seed_coords.to(self.args.device)
-            batch_hidden[max_loss_id] = seed_hidden.to(self.args.device)
+            batch_coords[max_loss_id] = seed_coords.clone().detach().to(self.args.device)
+            batch_hidden[max_loss_id] = seed_hidden.clone().detach().to(self.args.device)
             self.cache['steps'][max_loss_id] = 0
             self.cache['loss'][max_loss_id] = np.inf
             
@@ -76,14 +76,19 @@ class train_pool:
             pass
         
         # flatten out coordinate / hidden batches
-        batch_coords = batch_coords.reshape(batch_size * batch_coords.shape[1], 3)
-        batch_hidden = batch_hidden.reshape(batch_size * batch_hidden.shape[1], batch_hidden.shape[2])
+        flat_batch_coords = batch_coords.reshape(batch_size * batch_coords.shape[1], 3)
+        flat_batch_hidden = batch_hidden.reshape(batch_size * batch_hidden.shape[1], batch_hidden.shape[2])
+        
+        # make sure reshape works as intended
+        # for i in range(batch_size):
+        #     assert torch.equal(flat_batch_coords[self.n_nodes*i:self.n_nodes*(i+1),], batch_coords[i])
+        #     assert torch.equal(flat_batch_hidden[self.n_nodes*i:self.n_nodes*(i+1),], batch_hidden[i])
         
         # return batch-data object
         data = dict()
         data['ids'] = batch_ids
-        data['coords'] = batch_coords
-        data['hidden'] = batch_hidden
+        data['coords'] = flat_batch_coords
+        data['hidden'] = flat_batch_hidden
         data['comp_edges'] = comp_edges
         data['comp_lens'] = comp_lens
         return data
