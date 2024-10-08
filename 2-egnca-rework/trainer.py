@@ -88,9 +88,10 @@ class fixed_target_trainer(trainer):
         coords_collection = []
         if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
         
+        self.model.eval()
         with torch.no_grad():
             for _ in range(n_steps):
-                coords, hidden = self.model(coords, hidden, edges)
+                coords, hidden, _ = self.model(coords, hidden, edges)
                 if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
         
         mse = torch.nn.MSELoss(reduction='none')
@@ -144,6 +145,9 @@ class fixed_target_trainer(trainer):
         print (f'[trainer.py] starting training')
         for epoch in range(self.args.epochs):
             
+            # put model in train mode (might have switched to eval mode)
+            self.model.train()
+            
             # gather batch data
             batch_data = self.pool.get_batch(self.args.batch_size, self.args.comp_edge_percent)
             batch_coords = batch_data['coords'].to(self.args.device)
@@ -156,16 +160,19 @@ class fixed_target_trainer(trainer):
             
             # run graphs for n steps
             n = np.random.randint(self.args.min_steps, self.args.max_steps)
-            print (f'n steps: {n}')
             for _ in range(n):
-                batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, compare_graphs)
-                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, compare_graphs)
+                batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, False)
+                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, False)
                 
-                from utils import compare_collections
-                compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
+                # from utils import compare_collections
+                # compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
                 
-                assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)
-                assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden)
+                # coords_diff = batch_coords[0:self.n_nodes,] - graph_0_coords
+                # hidden_diff = batch_hidden[0:self.n_nodes,] - graph_0_hidden
+                # print (f'(dev) coords_diff:\n{coords_diff}')
+                # print (f'(dev) hidden_diff:\n{hidden_diff}')
+                # assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)
+                # assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden)
                 
             # configure comparison edges / lengths
             comp_lens = batch_data['comp_lens'].repeat([self.args.batch_size]).to(self.args.device)            
