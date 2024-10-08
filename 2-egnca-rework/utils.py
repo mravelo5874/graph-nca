@@ -3,7 +3,8 @@ from data.generate import \
     generate_line_graph, \
     generate_square_plane_graph, \
     retrieve_bunny_graph, \
-    generate_cube_graph
+    generate_cube_graph, \
+    generate_geodesic_polyhedron_graph
 from graph import graph
 import numpy as np
 import datetime
@@ -91,6 +92,8 @@ def create_graph(
         coords, edges = generate_square_plane_graph(size, length)
     elif graph_name == 'cube':
         coords, edges = generate_cube_graph(size, length)
+    elif graph_name == 'poly':
+        coords, edges = generate_geodesic_polyhedron_graph(2, True)
     elif graph_name == 'bunny':
         coords, edges = retrieve_bunny_graph()
     else:
