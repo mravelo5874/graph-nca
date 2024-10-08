@@ -17,8 +17,10 @@ class trainer():
         self.args = args
         self.model = model
         self.target_graph = create_graph(args.graph, args.size, args.length)
-        target_coords, _, _ = self.target_graph.get()
-        self.n_nodes = target_coords.shape[0]
+        coords, edges, _ = self.target_graph.get()
+        self.n_nodes = coords.shape[0]
+        self.n_edges = edges.shape[1]
+        print(f'[trainer.py] target graph: {self.n_nodes} nodes, {self.n_edges} edges')
     
     def runfor(self):
         raise NotImplementedError
@@ -154,26 +156,16 @@ class fixed_target_trainer(trainer):
             
             # run graphs for n steps
             n = np.random.randint(self.args.min_steps, self.args.max_steps)
+            print (f'n steps: {n}')
             for _ in range(n):
-                batch_coords, batch_hidden = self.model(batch_coords, batch_hidden, expanded_edges)
-                graph_0_coords, graph_0_hidden = self.model(graph_0_coords, graph_0_hidden, graph_0_edges)
+                batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, compare_graphs)
+                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, compare_graphs)
                 
-                # c = batch_coords[0:self.n_nodes,]
-                # print (f'(dev) batch_coords[0:self.n_nodes,]:\n{c}')
-                # print (f'(dev) graph_0_coords:\n{graph_0_coords}')
-                # e = torch.allclose(c, graph_0_coords)
-                # print (f'(dev) torch.allclose(...):\n{e}')
-                
-                b = batch_hidden[0:self.n_nodes,]
-                print (f'(dev) batch_hidden[0:self.n_nodes,]:\n{b}')
-                print (f'(dev) graph_0_hidden:\n{graph_0_hidden}')
-                e = torch.allclose(b, graph_0_hidden)
-                print (f'(dev) torch.allclose(...):\n{e}')
-                diff = b - graph_0_hidden
-                print (f'(dev) diff:\n{diff}')
+                from utils import compare_collections
+                compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
                 
                 assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)
-                assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden, atol=0.1, rtol=0.1)
+                assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden)
                 
             # configure comparison edges / lengths
             comp_lens = batch_data['comp_lens'].repeat([self.args.batch_size]).to(self.args.device)            

@@ -31,11 +31,15 @@ class fixed_target_egnca(torch.nn.Module):
         coords: torch.Tensor,
         hidden: torch.Tensor,
         edges: torch.LongTensor,
+        collect: bool = False
     ):
-        out_coords, out_hidden = self.egnn(
+        out_coords, \
+        out_hidden, \
+        collection = self.egnn(
             coords,
             hidden,
-            edges
+            edges,
+            collect
         )
         out_hidden = self.pairnorm(out_hidden)
-        return out_coords, out_hidden
+        return out_coords, out_hidden, collection

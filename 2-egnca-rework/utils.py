@@ -163,3 +163,100 @@ def compare_pool_vs_runfor_graphs(
     for i in fig2.data: fig3.add_trace(i, row=1, col=2)
     plotly.offline.init_notebook_mode()
     plotly.offline.iplot(fig3)
+    
+def compare_collections(
+    batch_collection: dict,
+    graph_collection: dict,
+    n_nodes: int,
+    n_edges: int
+):
+    # coords_dif
+    b = batch_collection['coords_dif'][0:n_edges]
+    g = graph_collection['coords_dif']
+    assert torch.allclose(b, g)
+    
+    # coords_l2
+    b = batch_collection['coords_l2'][0:n_edges]
+    g = graph_collection['coords_l2']
+    assert torch.allclose(b, g)
+    
+    # h_i
+    b = batch_collection['h_i'][0:n_edges]
+    g = graph_collection['h_i']
+    assert torch.allclose(b, g)
+    
+    # h_j
+    b = batch_collection['h_j'][0:n_edges]
+    g = graph_collection['h_j']
+    assert torch.allclose(b, g)
+    
+    # message_mlp_input
+    b = batch_collection['message_mlp_input'][0:n_edges]
+    g = graph_collection['message_mlp_input']
+    assert torch.allclose(b, g)
+    
+    # m_ij
+    b = batch_collection['m_ij'][0:n_edges]
+    g = graph_collection['m_ij']
+    # d = b-g
+    # print (f'm_ij diff:\n{d}')
+    assert torch.allclose(b, g)
+    
+    # coord_mlp_out
+    b = batch_collection['coord_mlp_out'][0:n_edges]
+    g = graph_collection['coord_mlp_out']
+    assert torch.allclose(b, g)
+
+    # coord_trans
+    b = batch_collection['coord_trans'][0:n_edges]
+    g = graph_collection['coord_trans']
+    assert torch.allclose(b, g)
+    
+    # coord_trans_matrix
+    b = batch_collection['coord_trans_matrix'][0:n_nodes, 0:n_nodes]
+    g = graph_collection['coord_trans_matrix']
+    assert torch.allclose(b, g)
+    
+    # node_i_nbors
+    b = batch_collection['node_i_nbors'][0:n_nodes]
+    g = graph_collection['node_i_nbors']
+    assert torch.allclose(b, g)
+    
+    # trans_sum_i
+    b = batch_collection['trans_sum_i'][0:n_nodes]
+    g = graph_collection['trans_sum_i']
+    assert torch.allclose(b, g)
+    
+    # coords_out
+    b = batch_collection['coords_out'][0:n_nodes]
+    g = graph_collection['coords_out']
+    assert torch.allclose(b, g)
+    
+    # m_ij_matrix
+    b = batch_collection['m_ij_matrix'][0:n_nodes, 0:n_nodes]
+    g = graph_collection['m_ij_matrix']
+    assert torch.allclose(b, g)
+    
+    # m_i
+    b = batch_collection['m_i'][0:n_nodes]
+    g = graph_collection['m_i']
+    assert torch.allclose(b, g)
+    
+    # hidden_mlp_input
+    b = batch_collection['hidden_mlp_input'][0:n_nodes]
+    g = graph_collection['hidden_mlp_input']
+    assert torch.allclose(b, g)
+    
+    # hidden_mlp_out
+    b = batch_collection['hidden_mlp_out'][0:n_nodes]
+    g = graph_collection['hidden_mlp_out']
+    # d = b-g
+    # print (f'hidden_mlp_out diff:\n{d}')
+    assert torch.allclose(b, g)
+    
+    # hidden_out
+    b = batch_collection['hidden_out'][0:n_nodes]
+    g = graph_collection['hidden_out']
+    assert torch.allclose(b, g)
+    
+    print ('batch and graph are equal (allclose)!')
