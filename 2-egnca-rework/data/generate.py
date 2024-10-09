@@ -51,7 +51,7 @@ def generate_cube_graph(
 def generate_geodesic_polyhedron_graph(
     subdivisions: int,
     normalize: bool = False
-):
+) -> Tuple[torch.Tensor, torch.LongTensor]:
     assert subdivisions >= 0
     import itertools
     
@@ -112,11 +112,16 @@ def generate_geodesic_polyhedron_graph(
     for face in faces:
         for i, j in itertools.combinations(face, 2):
             edges.add(tuple(sorted([i, j])))
+            
+    # duplicate edges (reverse nodes)
+    edges = list(edges)
+    n_edges = len(edges)
+    for i in range(n_edges):
+        edges.append((edges[i][1], edges[i][0]))
         
-    if normalize:
-        vertices /= np.linalg.norm(vertices, axis=1, keepdims=True)
+    if normalize: vertices /= np.linalg.norm(vertices, axis=1, keepdims=True)
     vertices = torch.tensor(vertices)
-    edges = torch.tensor(list(edges)).permute([1, 0]).long()
+    edges = torch.tensor(edges).permute([1, 0]).long()
     
     return vertices, edges
 

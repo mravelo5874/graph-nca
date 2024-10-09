@@ -137,6 +137,9 @@ class fixed_target_trainer(trainer):
             self.args.batch_size
         )
         
+        print (f'(dev) edges:\n{target_edges}')
+        print (f'(dev) expanded_edges:\n{expanded_edges}')
+        
         # start training regimen
         loss_log = []
         min_avg_loss = 1e100
@@ -160,15 +163,16 @@ class fixed_target_trainer(trainer):
             
             # run graphs for n steps
             n = np.random.randint(self.args.min_steps, self.args.max_steps)
+            print (f'epoch {epoch}, steps: {n}')
             for _ in range(n):
-                batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, False)
-                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, False)
+                batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, True)
+                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, True)
                 
-                # from utils import compare_collections
-                # compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
+                from utils import compare_collections
+                compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
                 
-                # coords_diff = batch_coords[0:self.n_nodes,] - graph_0_coords
-                # hidden_diff = batch_hidden[0:self.n_nodes,] - graph_0_hidden
+                coords_diff = batch_coords[0:self.n_nodes,] - graph_0_coords
+                hidden_diff = batch_hidden[0:self.n_nodes,] - graph_0_hidden
                 # print (f'(dev) coords_diff:\n{coords_diff}')
                 # print (f'(dev) hidden_diff:\n{hidden_diff}')
                 # assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)

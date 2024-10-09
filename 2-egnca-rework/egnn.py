@@ -101,6 +101,7 @@ class egc(torch.nn.Module):
         node_i_nbors = torch.zeros([n_nodes]).long()
         for i in range(n_nodes):
             node_i_nbors[i] = torch.sum(edges[1] == i).item()
+    
         assert torch.sum(node_i_nbors == 0).item() == 0
         node_i_nbors = node_i_nbors.unsqueeze(1)
         node_i_nbors = torch.cat([node_i_nbors]*3, dim=1).to(self.args.device)
