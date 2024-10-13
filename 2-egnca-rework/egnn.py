@@ -56,6 +56,9 @@ class egc(torch.nn.Module):
         assert coords.shape[0] == hidden.shape[0]
         n_nodes = coords.shape[0]
         
+        # print (f'(dev) egnn coords.shape: {coords.shape}')
+        # print (f'(dev) egnn hidden.shape: {hidden.shape}')
+        
         collect_dict = dict()
 
         # calculate coordinate differences and L2-norms
@@ -75,17 +78,17 @@ class egc(torch.nn.Module):
         
         # run message mlp
         message_mlp_input = torch.cat([h_i, h_j, coords_l2], dim=1).to(self.args.device)
-        message_mlp_input = message_mlp_input
         # print (f'(dev) message_mlp_input.shape: {message_mlp_input.shape}')
         m_ij = self.message_mlp(message_mlp_input)
-        # print (f'(dev) m_ij.shape: {m_ij.shape}')
+        
+        if collect: collect_dict['message_mlp_input'] = message_mlp_input.detach().clone().cpu()
+        if collect: collect_dict['m_ij'] = m_ij.detach().clone().cpu()
         
         # run attention mlp
         if self.args.has_attention:
             m_ij = self.attention_mlp(m_ij) * m_ij
-        
-        if collect: collect_dict['message_mlp_input'] = message_mlp_input.detach().clone().cpu()
-        if collect: collect_dict['m_ij'] = m_ij.detach().clone().cpu()
+            
+        if collect: collect_dict['attn_m_ij'] = m_ij.detach().clone().cpu()
         
         # run coordinate mlp
         coord_mlp_out = self.coord_mlp(m_ij) # <- (all-edges, coordinate-data)

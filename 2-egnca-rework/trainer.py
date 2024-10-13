@@ -16,6 +16,7 @@ class trainer():
     ):
         self.args = args
         self.model = model
+        self.prng = np.random.RandomState()
         self.target_graph = create_graph(args.graph, args.size, args.length)
         coords, edges, _ = self.target_graph.get()
         self.n_nodes = coords.shape[0]
@@ -82,17 +83,21 @@ class fixed_target_trainer(trainer):
         assert hasattr(self, 'seed_graph')
         assert hasattr(self, 'model')
 
-        seed_coords, edges, seed_hidden = self.seed_graph.get()
-        coords = seed_coords.detach().clone().to(self.args.device)
+        seed_coords, _, seed_hidden = self.seed_graph.get()
+        _, edges, _ = self.target_graph.get()
+        coords = seed_coords.clone().detach().to(self.args.device)
         hidden = seed_hidden.clone().detach().to(self.args.device)
         coords_collection = []
-        if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
+        if collect_graphs: coords_collection.append(coords.clone().detach().cpu())
+        
+        print (f'(dev) runfor coords.shape: {coords.shape}')
+        print (f'(dev) runfor hidden.shape: {hidden.shape}')
         
         self.model.eval()
         with torch.no_grad():
             for _ in range(n_steps):
                 coords, hidden, _ = self.model(coords, hidden, edges)
-                if collect_graphs: coords_collection.append(coords.detach().clone().cpu())
+                if collect_graphs: coords_collection.append(coords.clone().detach().cpu())
         
         mse = torch.nn.MSELoss(reduction='none')
         temp_pool = train_pool(self.args, self.seed_graph, self.target_graph)
@@ -112,7 +117,10 @@ class fixed_target_trainer(trainer):
         self, 
         vebose=False,
         compare_graphs=False,
+        compare_collections=False,
     ):
+        torch.set_default_dtype(torch.float64)
+        
         # create training objects
         self.pool = train_pool(self.args, self.seed_graph, self.target_graph)
         mse = torch.nn.MSELoss(reduction='none')
@@ -130,15 +138,15 @@ class fixed_target_trainer(trainer):
         )
         
         # expand target edges tensor
-        _, target_edges, _ = self.target_graph.get()
+        target_coords, target_edges, _ = self.target_graph.get()
         expanded_edges = expand_edge_tensor(
             target_edges,
             self.n_nodes, 
             self.args.batch_size
         )
         
-        print (f'(dev) edges:\n{target_edges}')
-        print (f'(dev) expanded_edges:\n{expanded_edges}')
+        # print (f'(dev) edges:\n{target_edges}')
+        # print (f'(dev) expanded_edges:\n{expanded_edges}')
         
         # start training regimen
         loss_log = []
@@ -156,27 +164,28 @@ class fixed_target_trainer(trainer):
             batch_coords = batch_data['coords'].to(self.args.device)
             batch_hidden = batch_data['hidden'].to(self.args.device)
             
+            pre_batch = batch_coords.detach().clone().cpu()
+            
             # (dev) test single graph vs whole batch training
-            graph_0_coords = batch_coords[0:self.n_nodes,].detach().clone().to(self.args.device)
-            graph_0_hidden = batch_hidden[0:self.n_nodes,].detach().clone().to(self.args.device)
-            _, graph_0_edges, _ = self.target_graph.get()
+            if compare_collections:
+                graph_0_coords = batch_coords[0:self.n_nodes,].detach().clone().to(self.args.device)
+                graph_0_hidden = batch_hidden[0:self.n_nodes,].detach().clone().to(self.args.device)
+                _, graph_0_edges, _ = self.target_graph.get()
             
             # run graphs for n steps
-            n = np.random.randint(self.args.min_steps, self.args.max_steps)
-            print (f'epoch {epoch}, steps: {n}')
+            n = self.prng.randint(self.args.min_steps, self.args.max_steps)
+            print (f'steps: {n}')
             for _ in range(n):
                 batch_coords, batch_hidden, batch_collection = self.model(batch_coords, batch_hidden, expanded_edges, True)
-                graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, True)
+                if compare_collections:
+                    graph_0_coords, graph_0_hidden, graph_collection = self.model(graph_0_coords, graph_0_hidden, graph_0_edges, True)
                 
-                from utils import compare_collections
-                compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
-                
-                coords_diff = batch_coords[0:self.n_nodes,] - graph_0_coords
-                hidden_diff = batch_hidden[0:self.n_nodes,] - graph_0_hidden
-                # print (f'(dev) coords_diff:\n{coords_diff}')
-                # print (f'(dev) hidden_diff:\n{hidden_diff}')
-                # assert torch.allclose(batch_coords[0:self.n_nodes,], graph_0_coords)
-                # assert torch.allclose(batch_hidden[0:self.n_nodes,], graph_0_hidden)
+                if compare_collections:
+                    print (f'epoch {epoch}')
+                    from utils import compare_collections
+                    compare_collections(batch_collection, graph_collection, self.n_nodes, self.n_edges)
+                    
+            post_batch = batch_coords.detach().clone().cpu()
                 
             # configure comparison edges / lengths
             comp_lens = batch_data['comp_lens'].repeat([self.args.batch_size]).to(self.args.device)            
@@ -233,6 +242,15 @@ class fixed_target_trainer(trainer):
                 if compare_graphs:
                     from utils import compare_pool_vs_runfor_graphs
                     compare_pool_vs_runfor_graphs(self)
+                    
+                # show pre and post batches
+                from utils import view_batch
+                
+                print ('pre-batch:')
+                view_batch(pre_batch, target_coords, target_edges, self.args.batch_size)
+                
+                print ('post-batch:')
+                view_batch(post_batch, target_coords, target_edges, self.args.batch_size)
                 
                 # print log info             
                 print (f'[{epoch}/{self.args.epochs}]\t {np.round(iter_per_sec, 3)}it/s\t time: {elapsed_time}~{est_rem_time}\t loss: {np.round(avg_loss, 8)}>{np.round(np.min(loss_log), 8)}\t lr: {lr}')

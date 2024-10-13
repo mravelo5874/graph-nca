@@ -133,8 +133,8 @@ def compare_pool_vs_runfor_graphs(
     index = graph_data['id']
     pred_coords = graph_data['coords']
     assert not torch.equal(pred_coords, trgt_coords)
-    steps = graph_data['steps']
     loss = graph_data['loss']
+    steps = graph_data['steps']
     fig1 = create_ploty_figure_multiple(
         graphs=[(trgt_coords, edges),
                 (pred_coords, edges)],
@@ -143,7 +143,8 @@ def compare_pool_vs_runfor_graphs(
     )
 
     # * show "runfor" graph
-    runfor_data = trainer.runfor(steps)
+    runfor_steps = np.random.randint(trainer.args.min_steps, trainer.args.max_steps)
+    runfor_data = trainer.runfor(runfor_steps)
     runfor_coords = runfor_data['coords']
     fig2 = create_ploty_figure_multiple(
         graphs=[(trgt_coords, edges),
@@ -160,12 +161,46 @@ def compare_pool_vs_runfor_graphs(
         specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
         subplot_titles=[
             f'pool graph #{index}, steps: {steps}, loss: {loss}',
-            f'runfor graph, steps: {steps} loss: {runfor_loss}'
+            f'runfor graph, steps: {runfor_steps} loss: {runfor_loss}'
     ])
     for i in fig1.data: fig3.add_trace(i, row=1, col=1)
     for i in fig2.data: fig3.add_trace(i, row=1, col=2)
     plotly.offline.init_notebook_mode()
     plotly.offline.iplot(fig3)
+    
+def view_batch(
+    batch_coords: torch.Tensor,
+    trgt_coords: torch.Tensor,
+    edges: torch.LongTensor,
+    batch_size: int
+):
+    from visualize import create_ploty_figure_multiple, rgba_colors_list
+    from IPython.display import clear_output
+    from plotly.subplots import make_subplots
+    import plotly
+    
+    figs = []
+    coords = batch_coords.reshape([batch_size, batch_coords.shape[0]//batch_size, batch_coords.shape[1]])
+    for i in range(batch_size):
+        fig = create_ploty_figure_multiple(
+            graphs=[(trgt_coords, edges),
+                    (coords[i], edges)],
+            coords_color=[rgba_colors_list[0], rgba_colors_list[1]],
+            edges_color=[rgba_colors_list[0], rgba_colors_list[1]]
+        )
+        figs.append(fig)
+        
+    multi_fig = make_subplots(
+        rows=1, cols=batch_size, 
+        vertical_spacing=0.02, 
+        specs=[[{'type': 'scatter3d'}]*batch_size],
+        subplot_titles=[f'batch {i}' for i in range(i)]
+    )
+    
+    for i in range(batch_size):
+        for j in figs[i].data: multi_fig.add_trace(j, row=1, col=i+1)
+    plotly.offline.init_notebook_mode()
+    plotly.offline.iplot(multi_fig)
     
 def compare_collections(
     batch_collection: dict,
@@ -173,93 +208,156 @@ def compare_collections(
     n_nodes: int,
     n_edges: int
 ):
+    assert batch_collection.keys() == graph_collection.keys()
+    
+    # for key in batch_collection.keys():
+    #     b = batch_collection['coords_dif'][0:n_edges]
+    #     g = graph_collection['coords_dif']
+    #     d = b-g
+    #     if torch.equal(d, torch.zeros_like(d)):
+    #         print (f'(h_i) difference:\n{d}')
+    #         assert torch.equal(b, g)
+    
     # coords_dif
     b = batch_collection['coords_dif'][0:n_edges]
     g = graph_collection['coords_dif']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coords_dif) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # coords_l2
     b = batch_collection['coords_l2'][0:n_edges]
     g = graph_collection['coords_l2']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coords_l2) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # h_i
     b = batch_collection['h_i'][0:n_edges]
     g = graph_collection['h_i']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(h_i) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # h_j
     b = batch_collection['h_j'][0:n_edges]
     g = graph_collection['h_j']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(h_j) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # message_mlp_input
     b = batch_collection['message_mlp_input'][0:n_edges]
     g = graph_collection['message_mlp_input']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(message_mlp_input) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # m_ij
     b = batch_collection['m_ij'][0:n_edges]
     g = graph_collection['m_ij']
     d = b-g
-    print (f'(dev) m_ij diff:\n{d}')
-    assert torch.equal(b, g)
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(m_ij) difference:\n{d}')
+        assert torch.equal(b, g)
+    
+    if 'attn_m_ij' in batch_collection and 'attn_m_ij' in graph_collection:
+        b = batch_collection['attn_m_ij'][0:n_edges]
+        g = graph_collection['attn_m_ij']
+        d = b-g
+        if not torch.equal(d, torch.zeros_like(d)):
+            print (f'(attn_m_ij) difference:\n{d}')
+            assert torch.equal(b, g)
     
     # coord_mlp_out
     b = batch_collection['coord_mlp_out'][0:n_edges]
     g = graph_collection['coord_mlp_out']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coord_mlp_out) difference:\n{d}')
+        assert torch.equal(b, g)
 
     # coord_trans
     b = batch_collection['coord_trans'][0:n_edges]
     g = graph_collection['coord_trans']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coord_trans) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # coord_trans_matrix
     b = batch_collection['coord_trans_matrix'][0:n_nodes, 0:n_nodes]
     g = graph_collection['coord_trans_matrix']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coord_trans_matrix) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # node_i_nbors
     b = batch_collection['node_i_nbors'][0:n_nodes]
     g = graph_collection['node_i_nbors']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(node_i_nbors) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # trans_sum_i
     b = batch_collection['trans_sum_i'][0:n_nodes]
     g = graph_collection['trans_sum_i']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(trans_sum_i) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # coords_out
     b = batch_collection['coords_out'][0:n_nodes]
     g = graph_collection['coords_out']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(coords_out) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # m_ij_matrix
     b = batch_collection['m_ij_matrix'][0:n_nodes, 0:n_nodes]
     g = graph_collection['m_ij_matrix']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(m_ij_matrix) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # m_i
     b = batch_collection['m_i'][0:n_nodes]
     g = graph_collection['m_i']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(m_i) difference:\n{d}')
+        assert torch.equal(b, g)
     
     # hidden_mlp_input
     b = batch_collection['hidden_mlp_input'][0:n_nodes]
     g = graph_collection['hidden_mlp_input']
-    assert torch.equal(b, g)
-    
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(hidden_mlp_input) difference:\n{d}')
+        assert torch.equal(b, g)
     # hidden_mlp_out
     b = batch_collection['hidden_mlp_out'][0:n_nodes]
     g = graph_collection['hidden_mlp_out']
-    # d = b-g
-    # print (f'hidden_mlp_out diff:\n{d}')
-    assert torch.equal(b, g)
-    
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(hidden_mlp_out) difference:\n{d}')
+        assert torch.equal(b, g)
     # hidden_out
     b = batch_collection['hidden_out'][0:n_nodes]
     g = graph_collection['hidden_out']
-    assert torch.equal(b, g)
+    d = b-g
+    if not torch.equal(d, torch.zeros_like(d)):
+        print (f'(hidden_out) difference:\n{d}')
+        assert torch.equal(b, g)
     
     print ('batch and graph are equal (equal)!')
